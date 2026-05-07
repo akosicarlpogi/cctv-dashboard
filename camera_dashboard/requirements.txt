@@ -1,4 +1,5 @@
-Flask
+flask
 gunicorn
-psycopg2-binary
+psycopg[binary]
 python-dotenv
+werkzeug
