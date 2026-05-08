@@ -3,15 +3,83 @@
 <head>
     <title>Network & CCTV Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; background: #333; color: white; padding: 15px 20px; border-radius: 8px; }
-        .header a { color: #ff4d4d; text-decoration: none; font-weight: bold; }
-        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-top: 20px; }
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-        .feed img { width: 100%; border: 2px solid #333; border-radius: 4px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; font-size: 0.9em; }
-        .status-up { color: green; font-weight: bold; }
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #333;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+        }
+
+        .header button {
+            color: white;
+            background-color: #ff4d4d;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .header button:hover {
+            background-color: #cc0000;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .feed img {
+            width: 100%;
+            border: 2px solid #333;
+            border-radius: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            font-size: 0.9em;
+            vertical-align: top;
+        }
+
+        .status-up {
+            color: green;
+            font-weight: bold;
+        }
+
+        .time-cell {
+            white-space: nowrap;
+        }
+
+        .ip-cell {
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
@@ -33,23 +101,49 @@
             <div class="card" style="margin-bottom: 20px;">
                 <h3>Connected Devices</h3>
                 <table>
-                    <tr><th>Device</th><th>IP Address</th><th>Status</th></tr>
-                    <tr><td>Router (Gateway)</td><td>192.168.1.1</td><td class="status-up">Online</td></tr>
-                    <tr><td>Web Server (Local)</td><td>192.168.1.20</td><td class="status-up">Online</td></tr>
-                    <tr><td>IP Camera</td><td>192.168.1.10</td><td class="status-up">Online</td></tr>
+                    <tr>
+                        <th>Device</th>
+                        <th>IP Address</th>
+                        <th>Status</th>
+                    </tr>
+                    <tr>
+                        <td>Router (Gateway)</td>
+                        <td>192.168.1.1</td>
+                        <td class="status-up">Online</td>
+                    </tr>
+                    <tr>
+                        <td>Web Server (Local)</td>
+                        <td>192.168.1.20</td>
+                        <td class="status-up">Online</td>
+                    </tr>
+                    <tr>
+                        <td>IP Camera</td>
+                        <td>192.168.1.10</td>
+                        <td class="status-up">Online</td>
+                    </tr>
                 </table>
             </div>
 
             <div class="card">
                 <h3>System Logs</h3>
                 <table>
-                    <tr><th>Time</th><th>User</th><th>Event</th><th>IP Address</th></tr>
-                    {% for log in logs %}
                     <tr>
-                        <td>{{ log.time }}</td>
+                        <th>Time</th>
+                        <th>User</th>
+                        <th>Event</th>
+                        <th>IP Address</th>
+                    </tr>
+
+                    {% for log in logs %}
+                    {% set time_parts = log.time.split(" ") %}
+                    <tr>
+                        <td class="time-cell">
+                            {{ time_parts[0] }}<br>
+                            {{ time_parts[1] if time_parts|length > 1 else "" }}
+                        </td>
                         <td>{{ log.user }}</td>
                         <td>{{ log.event }}</td>
-                        <td>{{ log.ip_address or "N/A" }}</td>
+                        <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
                     </tr>
                     {% endfor %}
                 </table>
