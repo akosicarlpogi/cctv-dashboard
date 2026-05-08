@@ -43,12 +43,13 @@
             <div class="card">
                 <h3>System Logs</h3>
                 <table>
-                    <tr><th>Time</th><th>User</th><th>Event</th></tr>
+                    <tr><th>Time</th><th>User</th><th>Event</th><th>IP Address</th></tr>
                     {% for log in logs %}
                     <tr>
                         <td>{{ log.time }}</td>
                         <td>{{ log.user }}</td>
                         <td>{{ log.event }}</td>
+                        <td>{{ log.ip_address or "N/A" }}</td>
                     </tr>
                     {% endfor %}
                 </table>

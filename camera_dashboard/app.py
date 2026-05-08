@@ -3,6 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 from psycopg.rows import dict_row
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -12,6 +13,9 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
+
+# Helps Flask correctly read proxy headers from Railway
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.secret_key = os.getenv("SECRET_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -44,17 +48,30 @@ def get_ph_time():
     return datetime.now(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def get_client_ip():
+    forwarded_for = request.headers.get("X-Forwarded-For")
+
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    return request.remote_addr or "UNKNOWN"
+
+
 def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def add_log(event, username):
     timestamp = get_ph_time()
+    ip_address = get_client_ip()
 
     with get_db_connection() as conn:
         conn.execute(
-            "INSERT INTO system_logs (time, event, username) VALUES (%s, %s, %s)",
-            (timestamp, event, username)
+            """
+            INSERT INTO system_logs (time, event, username, ip_address)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (timestamp, event, username, ip_address)
         )
 
 
@@ -73,8 +90,14 @@ def initialize_database():
                 id SERIAL PRIMARY KEY,
                 time VARCHAR(50) NOT NULL,
                 event VARCHAR(100) NOT NULL,
-                username VARCHAR(50) NOT NULL
+                username VARCHAR(50) NOT NULL,
+                ip_address VARCHAR(100)
             );
+        """)
+
+        conn.execute("""
+            ALTER TABLE system_logs
+            ADD COLUMN IF NOT EXISTS ip_address VARCHAR(100);
         """)
 
         default_users = [
@@ -163,7 +186,11 @@ def dashboard():
 
     with get_db_connection() as conn:
         logs = conn.execute(
-            "SELECT time, username AS user, event FROM system_logs ORDER BY id DESC"
+            """
+            SELECT time, username AS user, event, ip_address
+            FROM system_logs
+            ORDER BY id DESC
+            """
         ).fetchall()
 
     return render_template(
