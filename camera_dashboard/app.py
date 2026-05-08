@@ -3,15 +3,35 @@ from datetime import datetime
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from psycopg.rows import dict_row
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import psycopg
 import os
 
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY")
 
+app.secret_key = os.getenv("SECRET_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not app.secret_key:
+    raise RuntimeError("SECRET_KEY is missing.")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is missing.")
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True"
+)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
 CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
@@ -50,32 +70,36 @@ def initialize_database():
             );
         """)
 
-        existing_users = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        default_users = [
+            ("carlson", os.getenv("CARLSON_PASSWORD")),
+            ("rafael", os.getenv("RAFAEL_PASSWORD")),
+            ("steven", os.getenv("STEVEN_PASSWORD")),
+            ("patrick", os.getenv("PATRICK_PASSWORD")),
+        ]
 
-        if existing_users == 0:
-            default_users = [
-                ("carlson", os.getenv("CARLSON_PASSWORD")),
-                ("rafael", os.getenv("RAFAEL_PASSWORD")),
-                ("steven", os.getenv("STEVEN_PASSWORD")),
-                ("patrick", os.getenv("PATRICK_PASSWORD")),
-            ]
+        for username, password in default_users:
+            if not password:
+                continue
 
-            for username, password in default_users:
-                password_hash = generate_password_hash(password)
-
-                conn.execute(
-                    "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
-                    (username, password_hash)
-                )
+            password_hash = generate_password_hash(password)
 
             conn.execute(
-                "INSERT INTO system_logs (time, event, username) VALUES (%s, %s, %s)",
-                (
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Database initialized and default users created",
-                    "SYSTEM"
-                )
+                """
+                INSERT INTO users (username, password_hash)
+                VALUES (%s, %s)
+                ON CONFLICT (username)
+                DO UPDATE SET password_hash = EXCLUDED.password_hash;
+                """,
+                (username, password_hash)
             )
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 @app.route("/")
@@ -87,14 +111,15 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
 def login():
     if request.method == "POST":
-        username = request.form["username"].strip().lower()
-        password = request.form["password"]
+        username = request.form.get("username", "").strip().lower()
+        password = request.form.get("password", "")
 
         with get_db_connection() as conn:
             user = conn.execute(
-                "SELECT * FROM users WHERE username = %s",
+                "SELECT id, username, password_hash FROM users WHERE username = %s",
                 (username,)
             ).fetchone()
 
@@ -105,18 +130,19 @@ def login():
             add_log("Successful Login", username)
 
             return redirect(url_for("dashboard"))
-        else:
-            flash("Invalid credentials. Please try again.")
-            add_log("Failed Login Attempt", username)
+
+        flash("Invalid credentials. Please try again.")
+        add_log("Failed Login Attempt", username)
 
     return render_template("login.html")
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
     username = session.get("username", "UNKNOWN")
 
-    add_log("Logout", username)
+    if "user_id" in session:
+        add_log("Logout", username)
 
     session.clear()
 
@@ -143,4 +169,6 @@ def dashboard():
 initialize_database()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.getenv("PORT", 5000))
+    debug_mode = os.getenv("FLASK_DEBUG", "False") == "True"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
