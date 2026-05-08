@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from psycopg.rows import dict_row
@@ -36,13 +37,19 @@ limiter = Limiter(
 CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
 CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
+PH_TZ = ZoneInfo("Asia/Manila")
+
+
+def get_ph_time():
+    return datetime.now(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
 
 def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def add_log(event, username):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = get_ph_time()
 
     with get_db_connection() as conn:
         conn.execute(
