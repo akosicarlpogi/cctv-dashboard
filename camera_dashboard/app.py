@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import psycopg
+import requests
 import os
 
 load_dotenv()
@@ -41,6 +42,8 @@ limiter = Limiter(
 CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
 CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
 PH_TZ = ZoneInfo("Asia/Manila")
 
 
@@ -61,6 +64,26 @@ def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
+def send_discord_alert(event, username, ip_address, timestamp):
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    message = {
+        "content": (
+            "**Security Alert**\n"
+            f"Event: `{event}`\n"
+            f"User: `{username}`\n"
+            f"IP Address: `{ip_address}`\n"
+            f"Time: `{timestamp}`"
+        )
+    }
+
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
+    except requests.RequestException:
+        pass
+
+
 def add_log(event, username):
     timestamp = get_ph_time()
     ip_address = get_client_ip()
@@ -73,6 +96,10 @@ def add_log(event, username):
             """,
             (timestamp, event, username, ip_address)
         )
+
+    # Sends Discord notification only for failed login attempts
+    if event == "Failed Login Attempt":
+        send_discord_alert(event, username, ip_address, timestamp)
 
 
 def initialize_database():
