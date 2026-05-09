@@ -60,11 +60,64 @@ def get_client_ip():
     return request.remote_addr or "UNKNOWN"
 
 
+def get_device_info():
+    user_agent = request.headers.get("User-Agent", "").lower()
+
+    if not user_agent:
+        return "Unknown device"
+
+    # Common script/API tools
+    if any(tool in user_agent for tool in ["curl", "python-requests", "httpie", "postman", "wget"]):
+        return "Unknown script/tool"
+
+    # Edge must be checked before Chrome because Edge also includes Chrome in its user-agent
+    if "edg/" in user_agent and "windows" in user_agent:
+        return "Microsoft Edge on Windows"
+
+    if "edg/" in user_agent and "android" in user_agent:
+        return "Microsoft Edge on Android"
+
+    if "chrome" in user_agent and "windows" in user_agent:
+        return "Chrome on Windows"
+
+    if "chrome" in user_agent and "android" in user_agent:
+        return "Chrome on Android"
+
+    if "firefox" in user_agent and "windows" in user_agent:
+        return "Firefox on Windows"
+
+    if "firefox" in user_agent and "android" in user_agent:
+        return "Firefox on Android"
+
+    if "safari" in user_agent and "iphone" in user_agent:
+        return "Safari on iPhone"
+
+    if "safari" in user_agent and "ipad" in user_agent:
+        return "Safari on iPad"
+
+    if "safari" in user_agent and "macintosh" in user_agent:
+        return "Safari on Mac"
+
+    if "android" in user_agent:
+        return "Android phone browser"
+
+    if "windows" in user_agent:
+        return "Windows browser"
+
+    if "iphone" in user_agent:
+        return "iPhone browser"
+
+    if "macintosh" in user_agent:
+        return "Mac browser"
+
+    return "Unknown browser/device"
+
+
 def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
-def send_discord_alert(event, username, ip_address, timestamp):
+def send_discord_alert(event, username, ip_address, device_info, timestamp):
     if not DISCORD_WEBHOOK_URL:
         return
 
@@ -74,6 +127,7 @@ def send_discord_alert(event, username, ip_address, timestamp):
             f"Event: `{event}`\n"
             f"User: `{username}`\n"
             f"IP Address: `{ip_address}`\n"
+            f"Device/Browser: `{device_info}`\n"
             f"Time: `{timestamp}`"
         )
     }
@@ -87,18 +141,20 @@ def send_discord_alert(event, username, ip_address, timestamp):
 def add_log(event, username):
     timestamp = get_ph_time()
     ip_address = get_client_ip()
+    device_info = get_device_info()
 
     with get_db_connection() as conn:
         conn.execute(
             """
-            INSERT INTO system_logs (time, event, username, ip_address)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO system_logs (time, event, username, ip_address, browser_info)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (timestamp, event, username, ip_address)
+            (timestamp, event, username, ip_address, device_info)
         )
 
+    # Sends Discord notification for failed and successful login attempts
     if event in ["Failed Login Attempt", "Successful Login"]:
-        send_discord_alert(event, username, ip_address, timestamp)
+        send_discord_alert(event, username, ip_address, device_info, timestamp)
 
 
 def initialize_database():
@@ -117,13 +173,19 @@ def initialize_database():
                 time VARCHAR(50) NOT NULL,
                 event VARCHAR(100) NOT NULL,
                 username VARCHAR(50) NOT NULL,
-                ip_address VARCHAR(100)
+                ip_address VARCHAR(100),
+                browser_info VARCHAR(150)
             );
         """)
 
         conn.execute("""
             ALTER TABLE system_logs
             ADD COLUMN IF NOT EXISTS ip_address VARCHAR(100);
+        """)
+
+        conn.execute("""
+            ALTER TABLE system_logs
+            ADD COLUMN IF NOT EXISTS browser_info VARCHAR(150);
         """)
 
         default_users = [
@@ -167,7 +229,7 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
@@ -213,7 +275,7 @@ def dashboard():
     with get_db_connection() as conn:
         logs = conn.execute(
             """
-            SELECT time, username AS user, event, ip_address
+            SELECT time, username AS user, event, ip_address, browser_info
             FROM system_logs
             ORDER BY id DESC
             """

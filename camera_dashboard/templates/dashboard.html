@@ -80,6 +80,10 @@
         .ip-cell {
             white-space: nowrap;
         }
+
+        .browser-cell {
+            min-width: 120px;
+        }
     </style>
 </head>
 <body>
@@ -132,6 +136,7 @@
                         <th>User</th>
                         <th>Event</th>
                         <th>IP Address</th>
+                        <th>Device/Browser</th>
                     </tr>
 
                     {% for log in logs %}
@@ -144,6 +149,7 @@
                         <td>{{ log.user }}</td>
                         <td>{{ log.event }}</td>
                         <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
+                        <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
                     </tr>
                     {% endfor %}
                 </table>
