@@ -9,6 +9,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import psycopg
 import requests
+import socket
 import os
 
 load_dotenv()
@@ -47,6 +48,24 @@ CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
 CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+DEVICES = [
+    {
+        "name": "Router (Gateway)",
+        "ip": os.getenv("ROUTER_IP", "192.168.1.1"),
+        "port": int(os.getenv("ROUTER_PORT", 80)),
+    },
+    {
+        "name": "Network Switch",
+        "ip": os.getenv("SWITCH_IP", "192.168.1.2"),
+        "port": int(os.getenv("SWITCH_PORT", 80)),
+    },
+    {
+        "name": "IP Camera",
+        "ip": os.getenv("CAMERA_IP", "192.168.1.10"),
+        "port": int(os.getenv("CAMERA_PORT", 80)),
+    },
+]
 
 PH_TZ = ZoneInfo("Asia/Manila")
 
@@ -117,6 +136,30 @@ def get_device_info():
         return "Mac browser"
 
     return "Unknown browser/device"
+
+
+def is_device_online(ip_address, port, timeout=1):
+    try:
+        with socket.create_connection((ip_address, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def get_device_statuses():
+    device_statuses = []
+
+    for device in DEVICES:
+        online = is_device_online(device["ip"], device["port"])
+
+        device_statuses.append({
+            "name": device["name"],
+            "ip": device["ip"],
+            "status": "Online" if online else "Offline / Not Detected",
+            "online": online
+        })
+
+    return device_statuses
 
 
 def get_db_connection():
@@ -407,7 +450,8 @@ def dashboard():
     return render_template(
         "dashboard.html",
         camera_url=CAMERA_URL,
-        logs=logs
+        logs=logs,
+        devices=get_device_statuses()
     )
 
 

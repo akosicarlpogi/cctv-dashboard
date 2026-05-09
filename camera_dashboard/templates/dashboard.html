@@ -73,6 +73,11 @@
             font-weight: bold;
         }
 
+        .status-down {
+            color: red;
+            font-weight: bold;
+        }
+
         .time-cell {
             white-space: nowrap;
         }
@@ -110,21 +115,16 @@
                         <th>IP Address</th>
                         <th>Status</th>
                     </tr>
+
+                    {% for device in devices %}
                     <tr>
-                        <td>Router (Gateway)</td>
-                        <td>192.168.1.1</td>
-                        <td class="status-up">Online</td>
+                        <td>{{ device.name }}</td>
+                        <td>{{ device.ip }}</td>
+                        <td class="{{ 'status-up' if device.online else 'status-down' }}">
+                            {{ device.status }}
+                        </td>
                     </tr>
-                    <tr>
-                        <td>Web Server (Local)</td>
-                        <td>192.168.1.20</td>
-                        <td class="status-up">Online</td>
-                    </tr>
-                    <tr>
-                        <td>IP Camera</td>
-                        <td>192.168.1.10</td>
-                        <td class="status-up">Online</td>
-                    </tr>
+                    {% endfor %}
                 </table>
             </div>
 
