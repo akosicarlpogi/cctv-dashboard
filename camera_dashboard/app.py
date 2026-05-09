@@ -97,8 +97,7 @@ def add_log(event, username):
             (timestamp, event, username, ip_address)
         )
 
-    # Sends Discord notification only for failed login attempts
-    if event == "Failed Login Attempt":
+    if event in ["Failed Login Attempt", "Successful Login"]:
         send_discord_alert(event, username, ip_address, timestamp)
 
 
