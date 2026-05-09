@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -30,7 +30,11 @@ if not DATABASE_URL:
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True"
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True",
+
+    # Session expires after 1 hour
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    SESSION_REFRESH_EACH_REQUEST=False
 )
 
 limiter = Limiter(
@@ -51,6 +55,10 @@ def get_ph_time():
     return datetime.now(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def get_utc_now():
+    return datetime.now(timezone.utc)
+
+
 def get_client_ip():
     forwarded_for = request.headers.get("X-Forwarded-For")
 
@@ -66,11 +74,9 @@ def get_device_info():
     if not user_agent:
         return "Unknown device"
 
-    # Common script/API tools
     if any(tool in user_agent for tool in ["curl", "python-requests", "httpie", "postman", "wget"]):
         return "Unknown script/tool"
 
-    # Edge must be checked before Chrome because Edge also includes Chrome in its user-agent
     if "edg/" in user_agent and "windows" in user_agent:
         return "Microsoft Edge on Windows"
 
@@ -152,9 +158,95 @@ def add_log(event, username):
             (timestamp, event, username, ip_address, device_info)
         )
 
-    # Sends Discord notification for failed and successful login attempts
-    if event in ["Failed Login Attempt", "Successful Login"]:
+    if event in [
+        "Failed Login Attempt",
+        "Successful Login",
+        "Blocked Login Attempt",
+        "IP Temporarily Blocked"
+    ]:
         send_discord_alert(event, username, ip_address, device_info, timestamp)
+
+
+def is_ip_blocked(ip_address):
+    now = get_utc_now()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_ips WHERE blocked_until <= %s",
+            (now,)
+        )
+
+        blocked_ip = conn.execute(
+            """
+            SELECT blocked_until
+            FROM blocked_ips
+            WHERE ip_address = %s AND blocked_until > %s
+            """,
+            (ip_address, now)
+        ).fetchone()
+
+    return blocked_ip is not None
+
+
+def record_failed_attempt(username, ip_address):
+    now = get_utc_now()
+    window_start = now - timedelta(minutes=10)
+    blocked_until = now + timedelta(minutes=10)
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO failed_login_attempts (ip_address, username, attempted_at)
+            VALUES (%s, %s, %s)
+            """,
+            (ip_address, username, now)
+        )
+
+        conn.execute(
+            """
+            DELETE FROM failed_login_attempts
+            WHERE attempted_at < %s
+            """,
+            (now - timedelta(hours=24),)
+        )
+
+        failed_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM failed_login_attempts
+            WHERE ip_address = %s AND attempted_at >= %s
+            """,
+            (ip_address, window_start)
+        ).fetchone()["count"]
+
+        if failed_count >= 5:
+            conn.execute(
+                """
+                INSERT INTO blocked_ips (ip_address, blocked_until, reason)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (ip_address)
+                DO UPDATE SET
+                    blocked_until = EXCLUDED.blocked_until,
+                    reason = EXCLUDED.reason
+                """,
+                (
+                    ip_address,
+                    blocked_until,
+                    "Too many failed login attempts"
+                )
+            )
+
+            return True
+
+    return False
+
+
+def clear_failed_attempts(ip_address):
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM failed_login_attempts WHERE ip_address = %s",
+            (ip_address,)
+        )
 
 
 def initialize_database():
@@ -186,6 +278,23 @@ def initialize_database():
         conn.execute("""
             ALTER TABLE system_logs
             ADD COLUMN IF NOT EXISTS browser_info VARCHAR(150);
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS failed_login_attempts (
+                id SERIAL PRIMARY KEY,
+                ip_address VARCHAR(100) NOT NULL,
+                username VARCHAR(50) NOT NULL,
+                attempted_at TIMESTAMPTZ NOT NULL
+            );
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_ips (
+                ip_address VARCHAR(100) PRIMARY KEY,
+                blocked_until TIMESTAMPTZ NOT NULL,
+                reason TEXT
+            );
         """)
 
         default_users = [
@@ -234,6 +343,12 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
+        ip_address = get_client_ip()
+
+        if is_ip_blocked(ip_address):
+            add_log("Blocked Login Attempt", username)
+            flash("Too many failed login attempts. Please try again after 10 minutes.")
+            return render_template("login.html"), 429
 
         with get_db_connection() as conn:
             user = conn.execute(
@@ -242,15 +357,23 @@ def login():
             ).fetchone()
 
         if user and check_password_hash(user["password_hash"], password):
+            session.permanent = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
 
+            clear_failed_attempts(ip_address)
             add_log("Successful Login", username)
 
             return redirect(url_for("dashboard"))
 
         flash("Invalid credentials. Please try again.")
         add_log("Failed Login Attempt", username)
+
+        was_blocked = record_failed_attempt(username, ip_address)
+
+        if was_blocked:
+            add_log("IP Temporarily Blocked", username)
+            flash("Too many failed login attempts. Your IP is blocked for 10 minutes.")
 
     return render_template("login.html")
 
