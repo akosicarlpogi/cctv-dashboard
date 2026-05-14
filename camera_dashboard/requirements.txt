@@ -6,3 +6,4 @@ werkzeug
 Flask-Limiter
 requests
 Flask-WTF
+user-agents

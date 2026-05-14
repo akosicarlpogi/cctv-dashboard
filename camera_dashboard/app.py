@@ -64,7 +64,7 @@ MAX_PASSWORD_LENGTH = 128
 
 # Backup access setting
 # Default: only carlson can download backups.
-# You may set this in Railway Variables:
+# Railway variable example:
 # BACKUP_ALLOWED_USERS=carlson,rafael,steven,patrick
 BACKUP_ALLOWED_USERS = {
     username.strip().lower()
@@ -141,7 +141,8 @@ def get_device_info():
         "python-requests",
         "httpie",
         "postman",
-        "wget"
+        "wget",
+        "go-http-client"
     ]
 
     if any(tool in lowered_user_agent for tool in script_tools):
@@ -152,7 +153,7 @@ def get_device_info():
     browser = user_agent.browser.family or "Unknown Browser"
     operating_system = user_agent.os.family or "Unknown OS"
 
-    # Extra fallback for Opera because Opera often includes OPR/ in its user-agent
+    # Extra Opera fallback because Opera often includes OPR/ in its user-agent
     if "opr/" in lowered_user_agent or "opera" in lowered_user_agent:
         browser = "Opera"
 
@@ -283,7 +284,7 @@ def create_database_backup():
                 backup_data["tables"][table_name] = []
                 continue
 
-            # Safe because table_name only comes from the fixed backup_tables list above.
+            # Safe because table_name only comes from the fixed backup_tables list.
             rows = conn.execute(
                 f"SELECT * FROM {table_name}"
             ).fetchall()
