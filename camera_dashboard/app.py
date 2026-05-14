@@ -63,10 +63,14 @@ app.config.update(
 
 csrf = CSRFProtect(app)
 
+# IMPORTANT:
+# Do NOT put global limits here like ["200 per day", "50 per hour"].
+# Real-time logs call /api/logs every 2 seconds, so global limits will break it.
+# We only rate-limit the login POST route below.
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=[]
 )
 
 
@@ -778,6 +782,7 @@ def logout():
 
 
 @app.route("/api/session-status")
+@limiter.exempt
 def api_session_status():
     if "user_id" not in session:
         return jsonify({
@@ -792,6 +797,7 @@ def api_session_status():
 
 
 @app.route("/api/logs")
+@limiter.exempt
 def api_logs():
     if "user_id" not in session:
         return jsonify({
