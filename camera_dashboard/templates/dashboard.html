@@ -186,27 +186,31 @@
             <div class="card">
                 <h3>System Logs</h3>
                 <table>
-                    <tr>
-                        <th>Time</th>
-                        <th>User</th>
-                        <th>Event</th>
-                        <th>IP Address</th>
-                        <th>Device/Browser</th>
-                    </tr>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>User</th>
+                            <th>Event</th>
+                            <th>IP Address</th>
+                            <th>Device/Browser</th>
+                        </tr>
+                    </thead>
 
-                    {% for log in logs %}
-                    {% set time_parts = log.time.split(" ") %}
-                    <tr>
-                        <td class="time-cell">
-                            {{ time_parts[0] }}<br>
-                            {{ time_parts[1] if time_parts|length > 1 else "" }}
-                        </td>
-                        <td>{{ log.user }}</td>
-                        <td>{{ log.event }}</td>
-                        <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
-                        <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
-                    </tr>
-                    {% endfor %}
+                    <tbody id="logsTableBody">
+                        {% for log in logs %}
+                        {% set time_parts = log.time.split(" ") %}
+                        <tr>
+                            <td class="time-cell">
+                                {{ time_parts[0] }}<br>
+                                {{ time_parts[1] if time_parts|length > 1 else "" }}
+                            </td>
+                            <td>{{ log.user }}</td>
+                            <td>{{ log.event }}</td>
+                            <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
+                            <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
                 </table>
             </div>
         </div>
@@ -288,8 +292,78 @@
             setBrowserCameraDeviceStatus(false, "Offline / Stopped");
         }
 
+        function createTextCell(text, className = "") {
+            const cell = document.createElement("td");
+
+            if (className) {
+                cell.className = className;
+            }
+
+            cell.textContent = text || "N/A";
+            return cell;
+        }
+
+        function createTimeCell(timeValue) {
+            const cell = document.createElement("td");
+            cell.className = "time-cell";
+
+            const parts = (timeValue || "").split(" ");
+            const datePart = parts[0] || "N/A";
+            const timePart = parts[1] || "";
+
+            cell.appendChild(document.createTextNode(datePart));
+            cell.appendChild(document.createElement("br"));
+            cell.appendChild(document.createTextNode(timePart));
+
+            return cell;
+        }
+
+        async function refreshSystemLogs() {
+            try {
+                const response = await fetch("/api/logs", {
+                    method: "GET",
+                    cache: "no-store",
+                    credentials: "same-origin"
+                });
+
+                if (response.status === 401) {
+                    window.location.href = "/login";
+                    return;
+                }
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const logs = await response.json();
+                const tableBody = document.getElementById("logsTableBody");
+
+                if (!tableBody) {
+                    return;
+                }
+
+                tableBody.innerHTML = "";
+
+                logs.forEach(function(log) {
+                    const row = document.createElement("tr");
+
+                    row.appendChild(createTimeCell(log.time));
+                    row.appendChild(createTextCell(log.user));
+                    row.appendChild(createTextCell(log.event));
+                    row.appendChild(createTextCell(log.ip_address, "ip-cell"));
+                    row.appendChild(createTextCell(log.browser_info, "browser-cell"));
+
+                    tableBody.appendChild(row);
+                });
+            } catch (error) {
+                console.log("Unable to refresh logs.");
+            }
+        }
+
         window.addEventListener("load", function () {
             startCamera();
+            refreshSystemLogs();
+            setInterval(refreshSystemLogs, 2000);
         });
     </script>
 

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -640,6 +640,24 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/api/logs")
+def api_logs():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    with get_db_connection() as conn:
+        logs = conn.execute(
+            """
+            SELECT time, username AS user, event, ip_address, browser_info
+            FROM system_logs
+            ORDER BY id DESC
+            LIMIT 50
+            """
+        ).fetchall()
+
+    return jsonify([dict(log) for log in logs])
+
+
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
@@ -651,6 +669,7 @@ def dashboard():
             SELECT time, username AS user, event, ip_address, browser_info
             FROM system_logs
             ORDER BY id DESC
+            LIMIT 50
             """
         ).fetchall()
 
