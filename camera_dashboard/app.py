@@ -7,9 +7,11 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from psycopg.rows import dict_row
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect, CSRFError
 import psycopg
 import requests
 import socket
+import re
 import os
 
 load_dotenv()
@@ -38,6 +40,8 @@ app.config.update(
     SESSION_REFRESH_EACH_REQUEST=False
 )
 
+csrf = CSRFProtect(app)
+
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -53,6 +57,11 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 FAILED_LOGIN_LIMIT = 5
 FAILED_LOGIN_WINDOW_MINUTES = 5
 IP_BLOCK_MINUTES = 5
+ACCOUNT_LOCK_MINUTES = 5
+MAX_PASSWORD_LENGTH = 128
+
+# Only allow usernames like carlson, rafael, steven, patrick
+USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
 
 DEVICES = [
     {
@@ -81,6 +90,22 @@ def get_ph_time():
 
 def get_utc_now():
     return datetime.now(timezone.utc)
+
+
+def clean_log_value(value, fallback="UNKNOWN", max_length=50):
+    if value is None:
+        return fallback
+
+    cleaned = str(value).replace("\n", " ").replace("\r", " ").strip()
+
+    if not cleaned:
+        return fallback
+
+    return cleaned[:max_length]
+
+
+def is_valid_username(username):
+    return bool(USERNAME_PATTERN.fullmatch(username))
 
 
 def get_client_ip():
@@ -175,15 +200,24 @@ def send_discord_alert(event, username, ip_address, device_info, timestamp):
     if not DISCORD_WEBHOOK_URL:
         return
 
+    safe_event = clean_log_value(event, "UNKNOWN_EVENT", 100)
+    safe_username = clean_log_value(username, "UNKNOWN", 50)
+    safe_ip = clean_log_value(ip_address, "UNKNOWN_IP", 100)
+    safe_device = clean_log_value(device_info, "UNKNOWN_DEVICE", 150)
+
     message = {
         "content": (
             "**Security Alert**\n"
-            f"Event: `{event}`\n"
-            f"User: `{username}`\n"
-            f"IP Address: `{ip_address}`\n"
-            f"Device/Browser: `{device_info}`\n"
+            f"Event: `{safe_event}`\n"
+            f"User: `{safe_username}`\n"
+            f"IP Address: `{safe_ip}`\n"
+            f"Device/Browser: `{safe_device}`\n"
             f"Time: `{timestamp}`"
-        )
+        ),
+        # Prevents attackers from using the username field to ping @everyone/@here
+        "allowed_mentions": {
+            "parse": []
+        }
     }
 
     try:
@@ -197,22 +231,27 @@ def add_log(event, username):
     ip_address = get_client_ip()
     device_info = get_device_info()
 
+    safe_event = clean_log_value(event, "UNKNOWN_EVENT", 100)
+    safe_username = clean_log_value(username, "UNKNOWN", 50)
+
     with get_db_connection() as conn:
         conn.execute(
             """
             INSERT INTO system_logs (time, event, username, ip_address, browser_info)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (timestamp, event, username, ip_address, device_info)
+            (timestamp, safe_event, safe_username, ip_address, device_info)
         )
 
-    if event in [
+    if safe_event in [
         "Failed Login Attempt",
         "Successful Login",
         "Blocked Login Attempt",
-        "IP Temporarily Blocked"
+        "IP Temporarily Blocked",
+        "Username Temporarily Locked",
+        "Invalid Username Format"
     ]:
-        send_discord_alert(event, username, ip_address, device_info, timestamp)
+        send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
 
 def is_ip_blocked(ip_address):
@@ -236,10 +275,40 @@ def is_ip_blocked(ip_address):
     return blocked_ip is not None
 
 
+def is_username_locked(username):
+    now = get_utc_now()
+    safe_username = clean_log_value(username, "UNKNOWN", 50)
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM locked_accounts WHERE locked_until <= %s",
+            (now,)
+        )
+
+        locked_username = conn.execute(
+            """
+            SELECT locked_until
+            FROM locked_accounts
+            WHERE username = %s AND locked_until > %s
+            """,
+            (safe_username, now)
+        ).fetchone()
+
+    return locked_username is not None
+
+
 def record_failed_attempt(username, ip_address):
     now = get_utc_now()
     window_start = now - timedelta(minutes=FAILED_LOGIN_WINDOW_MINUTES)
-    blocked_until = now + timedelta(minutes=IP_BLOCK_MINUTES)
+    ip_blocked_until = now + timedelta(minutes=IP_BLOCK_MINUTES)
+    username_locked_until = now + timedelta(minutes=ACCOUNT_LOCK_MINUTES)
+
+    safe_username = clean_log_value(username, "invalid_username", 50)
+
+    result = {
+        "ip_blocked": False,
+        "username_locked": False
+    }
 
     with get_db_connection() as conn:
         conn.execute(
@@ -247,7 +316,7 @@ def record_failed_attempt(username, ip_address):
             INSERT INTO failed_login_attempts (ip_address, username, attempted_at)
             VALUES (%s, %s, %s)
             """,
-            (ip_address, username, now)
+            (ip_address, safe_username, now)
         )
 
         conn.execute(
@@ -258,7 +327,7 @@ def record_failed_attempt(username, ip_address):
             (now - timedelta(hours=24),)
         )
 
-        failed_count = conn.execute(
+        failed_ip_count = conn.execute(
             """
             SELECT COUNT(*) AS count
             FROM failed_login_attempts
@@ -267,7 +336,16 @@ def record_failed_attempt(username, ip_address):
             (ip_address, window_start)
         ).fetchone()["count"]
 
-        if failed_count >= FAILED_LOGIN_LIMIT:
+        failed_username_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM failed_login_attempts
+            WHERE username = %s AND attempted_at >= %s
+            """,
+            (safe_username, window_start)
+        ).fetchone()["count"]
+
+        if failed_ip_count >= FAILED_LOGIN_LIMIT:
             conn.execute(
                 """
                 INSERT INTO blocked_ips (ip_address, blocked_until, reason)
@@ -279,21 +357,45 @@ def record_failed_attempt(username, ip_address):
                 """,
                 (
                     ip_address,
-                    blocked_until,
-                    "Too many failed login attempts"
+                    ip_blocked_until,
+                    "Too many failed login attempts from this IP"
                 )
             )
 
-            return True
+            result["ip_blocked"] = True
 
-    return False
+        if safe_username not in ["UNKNOWN", "invalid_username"] and failed_username_count >= FAILED_LOGIN_LIMIT:
+            conn.execute(
+                """
+                INSERT INTO locked_accounts (username, locked_until, reason)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (username)
+                DO UPDATE SET
+                    locked_until = EXCLUDED.locked_until,
+                    reason = EXCLUDED.reason
+                """,
+                (
+                    safe_username,
+                    username_locked_until,
+                    "Too many failed login attempts for this username"
+                )
+            )
+
+            result["username_locked"] = True
+
+    return result
 
 
-def clear_failed_attempts(ip_address):
+def clear_failed_attempts(ip_address, username):
+    safe_username = clean_log_value(username, "UNKNOWN", 50)
+
     with get_db_connection() as conn:
         conn.execute(
-            "DELETE FROM failed_login_attempts WHERE ip_address = %s",
-            (ip_address,)
+            """
+            DELETE FROM failed_login_attempts
+            WHERE ip_address = %s OR username = %s
+            """,
+            (ip_address, safe_username)
         )
 
 
@@ -345,6 +447,24 @@ def initialize_database():
             );
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS locked_accounts (
+                username VARCHAR(50) PRIMARY KEY,
+                locked_until TIMESTAMPTZ NOT NULL,
+                reason TEXT
+            );
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_login_attempts_ip_time
+            ON failed_login_attempts (ip_address, attempted_at);
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_login_attempts_username_time
+            ON failed_login_attempts (username, attempted_at);
+        """)
+
         default_users = [
             ("carlson", os.getenv("CARLSON_PASSWORD")),
             ("rafael", os.getenv("RAFAEL_PASSWORD")),
@@ -374,6 +494,17 @@ def add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' http: https: data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "form-action 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none';"
+    )
     return response
 
 
@@ -381,6 +512,13 @@ def add_security_headers(response):
 def too_many_requests(error):
     flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
     return render_template("login.html"), 429
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    session.clear()
+    flash("Security token expired or invalid. Please try again.")
+    return redirect(url_for("login"))
 
 
 @app.route("/")
@@ -404,6 +542,42 @@ def login():
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
             return render_template("login.html"), 429
 
+        if not is_valid_username(username):
+            add_log("Invalid Username Format", username or "EMPTY")
+
+            block_result = record_failed_attempt("invalid_username", ip_address)
+
+            if block_result["ip_blocked"]:
+                add_log("IP Temporarily Blocked", "invalid_username")
+                flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
+                return render_template("login.html"), 429
+
+            flash("Invalid credentials. Please try again.")
+            return render_template("login.html")
+
+        if is_username_locked(username):
+            add_log("Blocked Login Attempt", username)
+            flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
+            return render_template("login.html"), 429
+
+        if len(password) < 1 or len(password) > MAX_PASSWORD_LENGTH:
+            add_log("Failed Login Attempt", username)
+
+            block_result = record_failed_attempt(username, ip_address)
+
+            if block_result["ip_blocked"]:
+                add_log("IP Temporarily Blocked", username)
+                flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
+                return render_template("login.html"), 429
+
+            if block_result["username_locked"]:
+                add_log("Username Temporarily Locked", username)
+                flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
+                return render_template("login.html"), 429
+
+            flash("Invalid credentials. Please try again.")
+            return render_template("login.html")
+
         with get_db_connection() as conn:
             user = conn.execute(
                 "SELECT id, username, password_hash FROM users WHERE username = %s",
@@ -415,7 +589,7 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
 
-            clear_failed_attempts(ip_address)
+            clear_failed_attempts(ip_address, username)
             add_log("Successful Login", username)
 
             return redirect(url_for("dashboard"))
@@ -423,11 +597,17 @@ def login():
         flash("Invalid credentials. Please try again.")
         add_log("Failed Login Attempt", username)
 
-        was_blocked = record_failed_attempt(username, ip_address)
+        block_result = record_failed_attempt(username, ip_address)
 
-        if was_blocked:
+        if block_result["ip_blocked"]:
             add_log("IP Temporarily Blocked", username)
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
+            return render_template("login.html"), 429
+
+        if block_result["username_locked"]:
+            add_log("Username Temporarily Locked", username)
+            flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
+            return render_template("login.html"), 429
 
     return render_template("login.html")
 

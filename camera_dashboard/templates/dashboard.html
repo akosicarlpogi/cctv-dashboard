@@ -95,7 +95,9 @@
 
     <div class="header">
         <h2>Network Monitoring Dashboard</h2>
+
         <form method="POST" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">Logout</button>
         </form>
     </div>
