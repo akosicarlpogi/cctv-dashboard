@@ -62,7 +62,7 @@
             {% endif %}
         {% endwith %}
 
-        <form method="POST">
+        <form method="POST" id="loginForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" id="client_device_info" name="client_device_info">
 
@@ -100,17 +100,18 @@
                 uaLower.includes("opt/") ||
                 uaLower.includes("oprgx");
 
-            if (isOpera) {
-                browser = "Opera";
-            } else if (ua.includes("EdgiOS") || ua.includes("EdgA") || ua.includes("Edg/")) {
-                browser = "Microsoft Edge";
-            } else if (ua.includes("CriOS") || ua.includes("Chrome")) {
-                browser = "Chrome";
-            } else if (ua.includes("FxiOS") || ua.includes("Firefox")) {
-                browser = "Firefox";
-            } else if (ua.includes("Safari")) {
-                browser = "Safari";
-            }
+            const isEdge =
+                ua.includes("EdgiOS") ||
+                ua.includes("EdgA") ||
+                ua.includes("Edg/");
+
+            const isChrome =
+                ua.includes("CriOS") ||
+                ua.includes("Chrome");
+
+            const isFirefox =
+                ua.includes("FxiOS") ||
+                ua.includes("Firefox");
 
             if (isIpad) {
                 os = "iPadOS";
@@ -132,10 +133,36 @@
                 deviceType = "Desktop";
             }
 
+            if (isOpera) {
+                browser = "Opera";
+            } else if (isEdge) {
+                browser = "Microsoft Edge";
+            } else if (isChrome) {
+                browser = "Chrome";
+            } else if (isFirefox) {
+                browser = "Firefox";
+            } else if (isIpad) {
+                browser = "iPadOS Browser";
+            } else if (ua.includes("Safari")) {
+                browser = "Safari";
+            }
+
             return `${browser} on ${os} (${deviceType})`;
         }
 
-        document.getElementById("client_device_info").value = detectDeviceInfo();
+        function setDeviceInfoField() {
+            const deviceInfoField = document.getElementById("client_device_info");
+
+            if (deviceInfoField) {
+                deviceInfoField.value = detectDeviceInfo();
+            }
+        }
+
+        window.addEventListener("load", setDeviceInfoField);
+
+        document.getElementById("loginForm").addEventListener("submit", function () {
+            setDeviceInfoField();
+        });
     </script>
 </body>
 </html>
