@@ -172,6 +172,14 @@
                         </td>
                     </tr>
                     {% endfor %}
+
+                    <tr>
+                        <td>Logged-in Device Camera</td>
+                        <td class="ip-cell">{{ client_ip }}</td>
+                        <td id="browserCameraDeviceStatus" class="status-down">
+                            Offline / Permission Required
+                        </td>
+                    </tr>
                 </table>
             </div>
 
@@ -207,6 +215,24 @@
     <script>
         let activeCameraStream = null;
 
+        function setBrowserCameraDeviceStatus(isOnline, message) {
+            const deviceStatus = document.getElementById("browserCameraDeviceStatus");
+
+            if (!deviceStatus) {
+                return;
+            }
+
+            deviceStatus.textContent = message;
+
+            if (isOnline) {
+                deviceStatus.classList.remove("status-down");
+                deviceStatus.classList.add("status-up");
+            } else {
+                deviceStatus.classList.remove("status-up");
+                deviceStatus.classList.add("status-down");
+            }
+        }
+
         async function startCamera() {
             const video = document.getElementById("userCamera");
             const status = document.getElementById("cameraStatus");
@@ -220,18 +246,25 @@
                 activeCameraStream = stream;
                 video.srcObject = stream;
                 video.style.display = "block";
+
                 status.textContent = "Camera is active. This preview is only from your current device.";
+                setBrowserCameraDeviceStatus(true, "Online");
+
             } catch (error) {
                 video.style.display = "none";
 
                 if (error.name === "NotAllowedError") {
                     status.textContent = "Camera permission denied. Click Start Camera and allow camera access.";
+                    setBrowserCameraDeviceStatus(false, "Permission Denied");
                 } else if (error.name === "NotFoundError") {
                     status.textContent = "No camera device found.";
+                    setBrowserCameraDeviceStatus(false, "No Camera Found");
                 } else if (error.name === "NotReadableError") {
                     status.textContent = "Camera is already being used by another app.";
+                    setBrowserCameraDeviceStatus(false, "Camera In Use");
                 } else {
                     status.textContent = "Unable to access camera.";
+                    setBrowserCameraDeviceStatus(false, "Offline / Not Detected");
                 }
             }
         }
@@ -250,7 +283,9 @@
 
             video.srcObject = null;
             video.style.display = "none";
+
             status.textContent = "Camera stopped.";
+            setBrowserCameraDeviceStatus(false, "Offline / Stopped");
         }
 
         window.addEventListener("load", function () {

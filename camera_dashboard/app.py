@@ -643,7 +643,8 @@ def dashboard():
         "dashboard.html",
         camera_url=CAMERA_URL,
         logs=logs,
-        devices=get_device_statuses()
+        devices=get_device_statuses(),
+        client_ip=get_client_ip()
     )
 
 
