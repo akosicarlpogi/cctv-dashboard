@@ -31,13 +31,23 @@ if not app.secret_key:
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing.")
 
+# Session timeout settings
+# The app logs out the user after 1 hour.
+# The cookie gets a short grace period so the browser can still notify the server
+# and record a proper "Session Timeout" log before the session is cleared.
+SESSION_TIMEOUT_MINUTES = 60
+SESSION_COOKIE_GRACE_MINUTES = 2
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True",
 
-    # Session expires after 1 hour
-    PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    # The real app timeout is enforced by session["expires_at"].
+    # The cookie lives slightly longer only so the server can still log the timeout event.
+    PERMANENT_SESSION_LIFETIME=timedelta(
+        minutes=SESSION_TIMEOUT_MINUTES + SESSION_COOKIE_GRACE_MINUTES
+    ),
     SESSION_REFRESH_EACH_REQUEST=False
 )
 
@@ -91,6 +101,37 @@ def get_ph_time():
 
 def get_utc_now():
     return datetime.now(timezone.utc)
+
+
+def get_session_expires_at():
+    expires_at = session.get("expires_at")
+
+    if not expires_at:
+        return None
+
+    try:
+        parsed_expires_at = datetime.fromisoformat(expires_at)
+
+        if parsed_expires_at.tzinfo is None:
+            parsed_expires_at = parsed_expires_at.replace(tzinfo=timezone.utc)
+
+        return parsed_expires_at
+    except ValueError:
+        return None
+
+
+def get_session_seconds_remaining():
+    expires_at = get_session_expires_at()
+
+    if not expires_at:
+        return 0
+
+    seconds_remaining = int((expires_at - get_utc_now()).total_seconds())
+    return max(0, seconds_remaining)
+
+
+def is_current_session_expired():
+    return "user_id" in session and get_session_seconds_remaining() <= 0
 
 
 def clean_log_value(value, fallback="UNKNOWN", max_length=50):
@@ -535,6 +576,29 @@ def handle_csrf_error(error):
     return redirect(url_for("login"))
 
 
+@app.before_request
+def enforce_session_timeout():
+    if request.endpoint in ["login", "static"]:
+        return None
+
+    if is_current_session_expired():
+        username = session.get("username", "UNKNOWN")
+
+        add_log("Session Timeout", username)
+        session.clear()
+
+        if request.path.startswith("/api/"):
+            return jsonify({
+                "authenticated": False,
+                "error": "Session expired"
+            }), 401
+
+        flash("Your session timed out. Please log in again.")
+        return redirect(url_for("login"))
+
+    return None
+
+
 @app.route("/")
 def index():
     if "user_id" in session:
@@ -604,6 +668,9 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["device_info"] = detected_device_info
+            session["expires_at"] = (
+                get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+            ).isoformat()
 
             clear_failed_attempts(ip_address, username)
             add_log("Successful Login", username)
@@ -638,6 +705,20 @@ def logout():
     session.clear()
 
     return redirect(url_for("login"))
+
+
+@app.route("/api/session-status")
+def api_session_status():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    return jsonify({
+        "authenticated": True,
+        "seconds_remaining": get_session_seconds_remaining()
+    })
 
 
 @app.route("/api/logs")
@@ -678,7 +759,8 @@ def dashboard():
         camera_url=CAMERA_URL,
         logs=logs,
         devices=get_device_statuses(),
-        client_ip=get_client_ip()
+        client_ip=get_client_ip(),
+        session_seconds_remaining=get_session_seconds_remaining()
     )
 
 

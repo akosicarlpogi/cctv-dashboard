@@ -34,6 +34,17 @@
             background-color: #cc0000;
         }
 
+        .session-notice {
+            display: none;
+            margin-top: 15px;
+            padding: 12px;
+            background: #fff3cd;
+            color: #664d03;
+            border: 1px solid #ffecb5;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+
         .grid {
             display: grid;
             grid-template-columns: 2fr 1fr;
@@ -134,6 +145,10 @@
         </form>
     </div>
 
+    <div id="sessionTimeoutNotice" class="session-notice">
+        Session timed out. Redirecting to login...
+    </div>
+
     <div class="grid">
         <div class="card feed">
             <h3>Live Camera Feed</h3>
@@ -218,6 +233,8 @@
 
     <script>
         let activeCameraStream = null;
+        let sessionTimeoutTimer = null;
+        const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
 
         function setBrowserCameraDeviceStatus(isOnline, message) {
             const deviceStatus = document.getElementById("browserCameraDeviceStatus");
@@ -292,6 +309,75 @@
             setBrowserCameraDeviceStatus(false, "Offline / Stopped");
         }
 
+        function showSessionTimeoutNotice() {
+            const notice = document.getElementById("sessionTimeoutNotice");
+
+            if (notice) {
+                notice.style.display = "block";
+            }
+        }
+
+        function handleSessionExpired() {
+            clearTimeout(sessionTimeoutTimer);
+            stopCamera();
+            showSessionTimeoutNotice();
+
+            setTimeout(function () {
+                window.location.href = "/login";
+            }, 800);
+        }
+
+        function scheduleSessionTimeout(secondsRemaining) {
+            clearTimeout(sessionTimeoutTimer);
+
+            const safeSeconds = Number(secondsRemaining) || 0;
+            const millisecondsUntilTimeout = Math.max(0, (safeSeconds * 1000) + 1000);
+
+            sessionTimeoutTimer = setTimeout(async function () {
+                try {
+                    await fetch("/api/session-status", {
+                        method: "GET",
+                        cache: "no-store",
+                        credentials: "same-origin"
+                    });
+                } catch (error) {
+                    console.log("Unable to notify server about timeout.");
+                }
+
+                handleSessionExpired();
+            }, millisecondsUntilTimeout);
+        }
+
+        async function checkSessionStatus() {
+            try {
+                const response = await fetch("/api/session-status", {
+                    method: "GET",
+                    cache: "no-store",
+                    credentials: "same-origin"
+                });
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (!data.authenticated || data.seconds_remaining <= 0) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                scheduleSessionTimeout(data.seconds_remaining);
+            } catch (error) {
+                console.log("Unable to check session status.");
+            }
+        }
+
         function createTextCell(text, className = "") {
             const cell = document.createElement("td");
 
@@ -327,7 +413,7 @@
                 });
 
                 if (response.status === 401) {
-                    window.location.href = "/login";
+                    handleSessionExpired();
                     return;
                 }
 
@@ -363,7 +449,11 @@
         window.addEventListener("load", function () {
             startCamera();
             refreshSystemLogs();
+            checkSessionStatus();
+            scheduleSessionTimeout(initialSessionSecondsRemaining);
+
             setInterval(refreshSystemLogs, 2000);
+            setInterval(checkSessionStatus, 10000);
         });
     </script>
 
