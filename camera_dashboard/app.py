@@ -49,6 +49,11 @@ CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
+# Login protection settings
+FAILED_LOGIN_LIMIT = 5
+FAILED_LOGIN_WINDOW_MINUTES = 5
+IP_BLOCK_MINUTES = 5
+
 DEVICES = [
     {
         "name": "Router (Gateway)",
@@ -233,8 +238,8 @@ def is_ip_blocked(ip_address):
 
 def record_failed_attempt(username, ip_address):
     now = get_utc_now()
-    window_start = now - timedelta(minutes=10)
-    blocked_until = now + timedelta(minutes=10)
+    window_start = now - timedelta(minutes=FAILED_LOGIN_WINDOW_MINUTES)
+    blocked_until = now + timedelta(minutes=IP_BLOCK_MINUTES)
 
     with get_db_connection() as conn:
         conn.execute(
@@ -262,7 +267,7 @@ def record_failed_attempt(username, ip_address):
             (ip_address, window_start)
         ).fetchone()["count"]
 
-        if failed_count >= 5:
+        if failed_count >= FAILED_LOGIN_LIMIT:
             conn.execute(
                 """
                 INSERT INTO blocked_ips (ip_address, blocked_until, reason)
@@ -372,6 +377,12 @@ def add_security_headers(response):
     return response
 
 
+@app.errorhandler(429)
+def too_many_requests(error):
+    flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
+    return render_template("login.html"), 429
+
+
 @app.route("/")
 def index():
     if "user_id" in session:
@@ -381,7 +392,7 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit("30 per minute", methods=["POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
@@ -390,7 +401,7 @@ def login():
 
         if is_ip_blocked(ip_address):
             add_log("Blocked Login Attempt", username)
-            flash("Too many failed login attempts. Please try again after 10 minutes.")
+            flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
             return render_template("login.html"), 429
 
         with get_db_connection() as conn:
@@ -416,7 +427,7 @@ def login():
 
         if was_blocked:
             add_log("IP Temporarily Blocked", username)
-            flash("Too many failed login attempts. Your IP is blocked for 10 minutes.")
+            flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
 
     return render_template("login.html")
 
