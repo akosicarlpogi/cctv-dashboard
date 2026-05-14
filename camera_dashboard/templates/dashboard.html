@@ -141,7 +141,7 @@
             <video id="userCamera" autoplay playsinline muted></video>
 
             <p id="cameraStatus">
-                Camera not started. Click Start Camera to use your device camera.
+                Starting camera...
             </p>
 
             <button type="button" class="camera-button" onclick="startCamera()">
@@ -225,7 +225,7 @@
                 video.style.display = "none";
 
                 if (error.name === "NotAllowedError") {
-                    status.textContent = "Camera permission denied. Please allow camera access in your browser.";
+                    status.textContent = "Camera permission denied. Click Start Camera and allow camera access.";
                 } else if (error.name === "NotFoundError") {
                     status.textContent = "No camera device found.";
                 } else if (error.name === "NotReadableError") {
@@ -252,6 +252,10 @@
             video.style.display = "none";
             status.textContent = "Camera stopped.";
         }
+
+        window.addEventListener("load", function () {
+            startCamera();
+        });
     </script>
 
 </body>
