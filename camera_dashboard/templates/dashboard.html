@@ -20,6 +20,12 @@
             border-radius: 8px;
         }
 
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
         .header button {
             color: white;
             background-color: #ff4d4d;
@@ -32,6 +38,14 @@
 
         .header button:hover {
             background-color: #cc0000;
+        }
+
+        .backup-button {
+            background-color: #28a745 !important;
+        }
+
+        .backup-button:hover {
+            background-color: #1e7e34 !important;
         }
 
         .grid {
@@ -128,10 +142,17 @@
     <div class="header">
         <h2>Network Monitoring Dashboard</h2>
 
-        <form method="POST" action="/logout">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit">Logout</button>
-        </form>
+        <div class="header-actions">
+            <form method="POST" action="/download-backup">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="backup-button">Download Database Backup</button>
+            </form>
+
+            <form method="POST" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit">Logout</button>
+            </form>
+        </div>
     </div>
 
     <div class="grid">

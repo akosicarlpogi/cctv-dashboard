@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, make_response
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -13,6 +13,7 @@ import requests
 import socket
 import re
 import os
+import json
 
 load_dotenv()
 
@@ -59,6 +60,15 @@ FAILED_LOGIN_WINDOW_MINUTES = 5
 IP_BLOCK_MINUTES = 5
 ACCOUNT_LOCK_MINUTES = 5
 MAX_PASSWORD_LENGTH = 128
+
+# Backup access setting
+# Default: only carlson can download backups.
+# You may set this in Railway Variables:
+# BACKUP_ALLOWED_USERS=carlson,rafael,steven,patrick
+BACKUP_ALLOWED_USERS = {
+    username.strip().lower()
+    for username in os.getenv("BACKUP_ALLOWED_USERS", "carlson").split(",")
+}
 
 # Only allow usernames like carlson, rafael, steven, patrick
 USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
@@ -248,9 +258,47 @@ def add_log(event, username):
         "Blocked Login Attempt",
         "IP Temporarily Blocked",
         "Username Temporarily Locked",
-        "Invalid Username Format"
+        "Invalid Username Format",
+        "Database Backup Downloaded",
+        "Unauthorized Backup Download Attempt"
     ]:
         send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
+
+
+def create_database_backup():
+    backup_tables = [
+        "users",
+        "system_logs",
+        "failed_login_attempts",
+        "blocked_ips",
+        "locked_accounts"
+    ]
+
+    backup_data = {
+        "created_at": get_ph_time(),
+        "created_by": session.get("username", "UNKNOWN"),
+        "tables": {}
+    }
+
+    with get_db_connection() as conn:
+        for table_name in backup_tables:
+            table_exists = conn.execute(
+                "SELECT to_regclass(%s) AS table_name",
+                (f"public.{table_name}",)
+            ).fetchone()["table_name"]
+
+            if not table_exists:
+                backup_data["tables"][table_name] = []
+                continue
+
+            # Safe because table_name only comes from the fixed backup_tables list above.
+            rows = conn.execute(
+                f"SELECT * FROM {table_name}"
+            ).fetchall()
+
+            backup_data["tables"][table_name] = [dict(row) for row in rows]
+
+    return backup_data
 
 
 def is_ip_blocked(ip_address):
@@ -611,6 +659,34 @@ def login():
             return render_template("login.html"), 429
 
     return render_template("login.html")
+
+
+@app.route("/download-backup", methods=["POST"])
+def download_backup():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    username = session.get("username", "UNKNOWN").lower()
+
+    if username not in BACKUP_ALLOWED_USERS:
+        add_log("Unauthorized Backup Download Attempt", username)
+        flash("You are not allowed to download database backups.")
+        return redirect(url_for("dashboard"))
+
+    add_log("Database Backup Downloaded", username)
+
+    backup_data = create_database_backup()
+    timestamp = datetime.now(PH_TZ).strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"cctv_security_backup_{timestamp}.json"
+
+    response = make_response(
+        json.dumps(backup_data, indent=4, default=str)
+    )
+
+    response.headers["Content-Type"] = "application/json"
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    return response
 
 
 @app.route("/logout", methods=["POST"])
