@@ -214,7 +214,6 @@ def send_discord_alert(event, username, ip_address, device_info, timestamp):
             f"Device/Browser: `{safe_device}`\n"
             f"Time: `{timestamp}`"
         ),
-        # Prevents attackers from using the username field to ping @everyone/@here
         "allowed_mentions": {
             "parse": []
         }
@@ -495,10 +494,12 @@ def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "img-src 'self' http: https: data:; "
+        "media-src 'self' blob:; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "form-action 'self'; "
         "base-uri 'self'; "

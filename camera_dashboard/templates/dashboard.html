@@ -48,10 +48,42 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
-        .feed img {
+        .feed video {
             width: 100%;
+            min-height: 300px;
+            background: #111;
             border: 2px solid #333;
             border-radius: 4px;
+            display: none;
+        }
+
+        .camera-button {
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-top: 10px;
+        }
+
+        .camera-button:hover {
+            background-color: #0056b3;
+        }
+
+        .stop-button {
+            background-color: #ff4d4d;
+        }
+
+        .stop-button:hover {
+            background-color: #cc0000;
+        }
+
+        #cameraStatus {
+            font-size: 0.95em;
+            color: #333;
+            margin-top: 10px;
         }
 
         table {
@@ -105,7 +137,20 @@
     <div class="grid">
         <div class="card feed">
             <h3>Live Camera Feed</h3>
-            <img src="{{ camera_url }}" alt="Camera Feed Offline. Ensure camera is at 192.168.1.10">
+
+            <video id="userCamera" autoplay playsinline muted></video>
+
+            <p id="cameraStatus">
+                Camera not started. Click Start Camera to use your device camera.
+            </p>
+
+            <button type="button" class="camera-button" onclick="startCamera()">
+                Start Camera
+            </button>
+
+            <button type="button" class="camera-button stop-button" onclick="stopCamera()">
+                Stop Camera
+            </button>
         </div>
 
         <div>
@@ -158,6 +203,56 @@
             </div>
         </div>
     </div>
+
+    <script>
+        let activeCameraStream = null;
+
+        async function startCamera() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("cameraStatus");
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+
+                activeCameraStream = stream;
+                video.srcObject = stream;
+                video.style.display = "block";
+                status.textContent = "Camera is active. This preview is only from your current device.";
+            } catch (error) {
+                video.style.display = "none";
+
+                if (error.name === "NotAllowedError") {
+                    status.textContent = "Camera permission denied. Please allow camera access in your browser.";
+                } else if (error.name === "NotFoundError") {
+                    status.textContent = "No camera device found.";
+                } else if (error.name === "NotReadableError") {
+                    status.textContent = "Camera is already being used by another app.";
+                } else {
+                    status.textContent = "Unable to access camera.";
+                }
+            }
+        }
+
+        function stopCamera() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("cameraStatus");
+
+            if (activeCameraStream) {
+                activeCameraStream.getTracks().forEach(function(track) {
+                    track.stop();
+                });
+
+                activeCameraStream = null;
+            }
+
+            video.srcObject = null;
+            video.style.display = "none";
+            status.textContent = "Camera stopped.";
+        }
+    </script>
 
 </body>
 </html>
