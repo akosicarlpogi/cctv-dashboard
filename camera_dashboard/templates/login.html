@@ -64,6 +64,7 @@
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" id="client_device_info" name="client_device_info">
 
             <input type="text" name="username" placeholder="Username" required>
             <input type="password" name="password" placeholder="Password" required>
@@ -71,5 +72,57 @@
             <button type="submit">Login</button>
         </form>
     </div>
+
+    <script>
+        function detectDeviceInfo() {
+            const ua = navigator.userAgent || "";
+            const platform = navigator.platform || "";
+            const maxTouchPoints = navigator.maxTouchPoints || 0;
+
+            let browser = "Unknown Browser";
+            let os = "Unknown OS";
+            let deviceType = "Unknown Device";
+
+            if (ua.includes("OPR/") || ua.includes("Opera") || ua.includes("OPiOS")) {
+                browser = "Opera";
+            } else if (ua.includes("Edg/")) {
+                browser = "Microsoft Edge";
+            } else if (ua.includes("Chrome") || ua.includes("CriOS")) {
+                browser = "Chrome";
+            } else if (ua.includes("Firefox") || ua.includes("FxiOS")) {
+                browser = "Firefox";
+            } else if (ua.includes("Safari")) {
+                browser = "Safari";
+            }
+
+            const isIpad =
+                ua.includes("iPad") ||
+                (platform === "MacIntel" && maxTouchPoints > 1);
+
+            if (isIpad) {
+                os = "iPadOS";
+                deviceType = "Tablet";
+            } else if (ua.includes("iPhone")) {
+                os = "iOS";
+                deviceType = "Mobile";
+            } else if (ua.includes("Android")) {
+                os = "Android";
+                deviceType = ua.includes("Mobile") ? "Mobile" : "Tablet";
+            } else if (ua.includes("Windows")) {
+                os = "Windows";
+                deviceType = "Desktop";
+            } else if (ua.includes("Mac OS X") || ua.includes("Macintosh")) {
+                os = "Mac OS X";
+                deviceType = "Desktop";
+            } else if (ua.includes("Linux")) {
+                os = "Linux";
+                deviceType = "Desktop";
+            }
+
+            return `${browser} on ${os} (${deviceType})`;
+        }
+
+        document.getElementById("client_device_info").value = detectDeviceInfo();
+    </script>
 </body>
 </html>

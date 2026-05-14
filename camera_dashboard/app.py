@@ -119,6 +119,16 @@ def get_client_ip():
 
 
 def get_device_info():
+    client_device_info = request.form.get("client_device_info", "").strip()
+
+    if client_device_info:
+        return clean_log_value(client_device_info, "Unknown device", 150)
+
+    saved_device_info = session.get("device_info")
+
+    if saved_device_info:
+        return clean_log_value(saved_device_info, "Unknown device", 150)
+
     user_agent_string = request.headers.get("User-Agent", "")
 
     if not user_agent_string:
@@ -143,11 +153,21 @@ def get_device_info():
     browser = user_agent.browser.family or "Unknown Browser"
     operating_system = user_agent.os.family or "Unknown OS"
 
-    # Extra Opera fallback because Opera often includes OPR/ in its user-agent
-    if "opr/" in lowered_user_agent or "opera" in lowered_user_agent:
+    # Extra fallback for Opera because Opera often includes OPR/ or OPiOS.
+    if "opr/" in lowered_user_agent or "opera" in lowered_user_agent or "opios" in lowered_user_agent:
         browser = "Opera"
 
-    if user_agent.is_mobile:
+    # Extra fallback for iPadOS because iPads can report themselves as Mac OS X.
+    is_ipad_disguised_as_mac = (
+        "macintosh" in lowered_user_agent
+        and "mobile" in lowered_user_agent
+        and "safari" in lowered_user_agent
+    )
+
+    if "ipad" in lowered_user_agent or is_ipad_disguised_as_mac:
+        operating_system = "iPadOS"
+        device_type = "Tablet"
+    elif user_agent.is_mobile:
         device_type = "Mobile"
     elif user_agent.is_tablet:
         device_type = "Tablet"
@@ -530,6 +550,7 @@ def login():
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         ip_address = get_client_ip()
+        detected_device_info = get_device_info()
 
         if is_ip_blocked(ip_address):
             add_log("Blocked Login Attempt", username)
@@ -582,6 +603,7 @@ def login():
             session.permanent = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
+            session["device_info"] = detected_device_info
 
             clear_failed_attempts(ip_address, username)
             add_log("Successful Login", username)
