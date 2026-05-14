@@ -19,8 +19,8 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Railway runs your app behind a proxy.
-# This helps Flask read the real IP/protocol correctly.
+# Railway runs your Flask app behind a proxy.
+# ProxyFix helps Flask read the real client IP/protocol correctly.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.secret_key = os.getenv("SECRET_KEY")
@@ -32,18 +32,18 @@ if not app.secret_key:
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing.")
 
+
 # ============================================================
 # SESSION TIMEOUT SETTINGS
 # ============================================================
 # Main rule:
-# The user is considered logged out after exactly 1 hour.
+# User access expires after exactly 1 hour.
 #
 # Cookie grace:
-# The browser cookie lasts a few minutes longer only so that when the user
-# comes back after 1 hour, the server can still identify the user and record
-# "Session Timeout" in the system logs.
+# Cookie lasts slightly longer so when an expired user returns,
+# the server can still identify the user and record "Session Timeout".
 #
-# Even though the cookie lasts 65 minutes, the real login access stops at 60.
+# Even though cookie lasts 65 minutes, actual dashboard access ends at 60.
 SESSION_TIMEOUT_MINUTES = 60
 SESSION_COOKIE_GRACE_MINUTES = 5
 
@@ -68,6 +68,11 @@ limiter = Limiter(
     app=app,
     default_limits=["200 per day", "50 per hour"]
 )
+
+
+# ============================================================
+# ENVIRONMENT VARIABLES / SETTINGS
+# ============================================================
 
 CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
 CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
@@ -102,6 +107,10 @@ DEVICES = [
 
 PH_TZ = ZoneInfo("Asia/Manila")
 
+
+# ============================================================
+# TIME / SESSION HELPERS
+# ============================================================
 
 def get_ph_time():
     return datetime.now(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -142,6 +151,10 @@ def get_session_seconds_remaining():
 def is_current_session_expired():
     return "user_id" in session and get_session_seconds_remaining() <= 0
 
+
+# ============================================================
+# LOG / SECURITY HELPERS
+# ============================================================
 
 def clean_log_value(value, fallback="UNKNOWN", max_length=50):
     if value is None:
@@ -229,30 +242,6 @@ def get_device_info():
     return f"{browser} on {operating_system} ({device_type})"
 
 
-def is_device_online(ip_address, port, timeout=1):
-    try:
-        with socket.create_connection((ip_address, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def get_device_statuses():
-    device_statuses = []
-
-    for device in DEVICES:
-        online = is_device_online(device["ip"], device["port"])
-
-        device_statuses.append({
-            "name": device["name"],
-            "ip": device["ip"],
-            "status": "Online" if online else "Offline / Not Detected",
-            "online": online
-        })
-
-    return device_statuses
-
-
 def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
@@ -314,6 +303,38 @@ def add_log(event, username):
     ]:
         send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
+
+# ============================================================
+# DEVICE STATUS HELPERS
+# ============================================================
+
+def is_device_online(ip_address, port, timeout=1):
+    try:
+        with socket.create_connection((ip_address, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def get_device_statuses():
+    device_statuses = []
+
+    for device in DEVICES:
+        online = is_device_online(device["ip"], device["port"])
+
+        device_statuses.append({
+            "name": device["name"],
+            "ip": device["ip"],
+            "status": "Online" if online else "Offline / Not Detected",
+            "online": online
+        })
+
+    return device_statuses
+
+
+# ============================================================
+# LOGIN PROTECTION HELPERS
+# ============================================================
 
 def is_ip_blocked(ip_address):
     now = get_utc_now()
@@ -460,6 +481,10 @@ def clear_failed_attempts(ip_address, username):
         )
 
 
+# ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
+
 def initialize_database():
     with get_db_connection() as conn:
         conn.execute("""
@@ -550,6 +575,10 @@ def initialize_database():
             )
 
 
+# ============================================================
+# SECURITY HEADERS / ERRORS / SESSION ENFORCEMENT
+# ============================================================
+
 @app.after_request
 def add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
@@ -570,8 +599,8 @@ def add_security_headers(response):
         "frame-ancestors 'none';"
     )
 
-    # Prevent the browser from showing an old dashboard after sleep,
-    # closed browser, or back button restore.
+    # Prevent browser from showing an old cached dashboard after sleep,
+    # closed browser, back button, or restored tab.
     if request.endpoint != "static":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -600,7 +629,7 @@ def enforce_session_timeout():
     if request.endpoint in open_endpoints:
         return None
 
-    # If the user has no valid session, force login.
+    # If user has no valid session, force login.
     if "user_id" not in session:
         if request.path.startswith("/api/"):
             return jsonify({
@@ -610,8 +639,8 @@ def enforce_session_timeout():
 
         return redirect(url_for("login"))
 
-    # If the user has a session but the fixed 1-hour timer is done,
-    # log the timeout, clear the session, and force login.
+    # If user has a session but the fixed 1-hour timer is done,
+    # log timeout, clear session, and force login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
 
@@ -629,6 +658,10 @@ def enforce_session_timeout():
 
     return None
 
+
+# ============================================================
+# ROUTES
+# ============================================================
 
 @app.route("/")
 def index():
@@ -761,7 +794,10 @@ def api_session_status():
 @app.route("/api/logs")
 def api_logs():
     if "user_id" not in session:
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
 
     with get_db_connection() as conn:
         logs = conn.execute(

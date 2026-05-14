@@ -98,6 +98,13 @@
             margin-top: 10px;
         }
 
+        .log-refresh-status {
+            font-size: 0.85em;
+            color: #555;
+            margin-top: -5px;
+            margin-bottom: 8px;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -204,6 +211,10 @@
             <div class="card">
                 <h3>System Logs</h3>
 
+                <div id="logsRefreshStatus" class="log-refresh-status">
+                    Waiting for real-time logs...
+                </div>
+
                 <table>
                     <thead>
                         <tr>
@@ -238,6 +249,8 @@
     <script>
         let activeCameraStream = null;
         let sessionTimeoutTimer = null;
+        let logRefreshInterval = null;
+        let sessionCheckInterval = null;
         let alreadyHandlingExpiredSession = false;
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
@@ -343,12 +356,23 @@
             alreadyHandlingExpiredSession = true;
 
             clearTimeout(sessionTimeoutTimer);
+            clearInterval(logRefreshInterval);
+            clearInterval(sessionCheckInterval);
+
             stopCamera();
             showSessionTimeoutNotice();
 
             setTimeout(function () {
                 window.location.replace("/login");
             }, 500);
+        }
+
+        function updateLogRefreshStatus(message) {
+            const status = document.getElementById("logsRefreshStatus");
+
+            if (status) {
+                status.textContent = message;
+            }
         }
 
         function scheduleSessionTimeout(secondsRemaining) {
@@ -359,16 +383,29 @@
 
             sessionTimeoutTimer = setTimeout(async function () {
                 try {
-                    await fetch("/api/session-status", {
+                    const response = await fetch("/api/session-status?t=" + Date.now(), {
                         method: "GET",
                         cache: "no-store",
                         credentials: "same-origin"
                     });
-                } catch (error) {
-                    console.log("Unable to notify server about timeout.");
-                }
 
-                handleSessionExpired();
+                    if (response.status === 401) {
+                        handleSessionExpired();
+                        return;
+                    }
+
+                    const data = await response.json();
+
+                    if (!data.authenticated || data.seconds_remaining <= 0) {
+                        handleSessionExpired();
+                        return;
+                    }
+
+                    scheduleSessionTimeout(data.seconds_remaining);
+
+                } catch (error) {
+                    console.log("Unable to verify session timeout:", error);
+                }
             }, millisecondsUntilTimeout);
         }
 
@@ -378,7 +415,7 @@
             }
 
             try {
-                const response = await fetch("/api/session-status", {
+                const response = await fetch("/api/session-status?t=" + Date.now(), {
                     method: "GET",
                     cache: "no-store",
                     credentials: "same-origin"
@@ -390,6 +427,7 @@
                 }
 
                 if (!response.ok) {
+                    console.log("Session status check failed:", response.status);
                     return;
                 }
 
@@ -403,7 +441,7 @@
                 scheduleSessionTimeout(data.seconds_remaining);
 
             } catch (error) {
-                console.log("Unable to check session status.");
+                console.log("Unable to check session status:", error);
             }
         }
 
@@ -439,7 +477,7 @@
             }
 
             try {
-                const response = await fetch("/api/logs", {
+                const response = await fetch("/api/logs?t=" + Date.now(), {
                     method: "GET",
                     cache: "no-store",
                     credentials: "same-origin"
@@ -451,6 +489,8 @@
                 }
 
                 if (!response.ok) {
+                    console.log("Logs refresh failed:", response.status);
+                    updateLogRefreshStatus("Real-time logs failed. Status: " + response.status);
                     return;
                 }
 
@@ -458,6 +498,8 @@
                 const tableBody = document.getElementById("logsTableBody");
 
                 if (!tableBody) {
+                    console.log("logsTableBody not found.");
+                    updateLogRefreshStatus("Real-time logs failed. Table body not found.");
                     return;
                 }
 
@@ -475,38 +517,60 @@
                     tableBody.appendChild(row);
                 });
 
+                updateLogRefreshStatus(
+                    "Real-time logs active. Last updated: " + new Date().toLocaleTimeString()
+                );
+
+                console.log("System logs refreshed:", new Date().toLocaleTimeString());
+
             } catch (error) {
-                console.log("Unable to refresh logs.");
+                console.log("Unable to refresh logs:", error);
+                updateLogRefreshStatus("Unable to refresh real-time logs. Check console.");
             }
+        }
+
+        function startLogPolling() {
+            clearInterval(logRefreshInterval);
+
+            refreshSystemLogs();
+
+            logRefreshInterval = setInterval(function () {
+                refreshSystemLogs();
+            }, 2000);
+        }
+
+        function startSessionChecking() {
+            clearInterval(sessionCheckInterval);
+
+            checkSessionStatus();
+            scheduleSessionTimeout(initialSessionSecondsRemaining);
+
+            sessionCheckInterval = setInterval(function () {
+                checkSessionStatus();
+            }, 10000);
         }
 
         window.addEventListener("load", function () {
             startCamera();
-            refreshSystemLogs();
-            checkSessionStatus();
-            scheduleSessionTimeout(initialSessionSecondsRemaining);
-
-            setInterval(refreshSystemLogs, 2000);
-            setInterval(checkSessionStatus, 10000);
+            startLogPolling();
+            startSessionChecking();
         });
 
-        // Important:
-        // These are for your exact requirement:
-        // 1. Tab was inactive/not opened for 1 hour.
-        // 2. Browser was closed/laptop slept and then opened again.
-        // The moment the page wakes up, it checks the server.
         window.addEventListener("focus", function () {
             checkSessionStatus();
+            refreshSystemLogs();
         });
 
         document.addEventListener("visibilitychange", function () {
             if (!document.hidden) {
                 checkSessionStatus();
+                refreshSystemLogs();
             }
         });
 
         window.addEventListener("pageshow", function () {
             checkSessionStatus();
+            refreshSystemLogs();
         });
     </script>
 
