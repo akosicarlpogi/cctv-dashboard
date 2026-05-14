@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect, CSRFError
+from user_agents import parse
 import psycopg
 import requests
 import socket
@@ -128,54 +129,45 @@ def get_client_ip():
 
 
 def get_device_info():
-    user_agent = request.headers.get("User-Agent", "").lower()
+    user_agent_string = request.headers.get("User-Agent", "")
 
-    if not user_agent:
+    if not user_agent_string:
         return "Unknown device"
 
-    if any(tool in user_agent for tool in ["curl", "python-requests", "httpie", "postman", "wget"]):
+    lowered_user_agent = user_agent_string.lower()
+
+    script_tools = [
+        "curl",
+        "python-requests",
+        "httpie",
+        "postman",
+        "wget"
+    ]
+
+    if any(tool in lowered_user_agent for tool in script_tools):
         return "Unknown script/tool"
 
-    if "edg/" in user_agent and "windows" in user_agent:
-        return "Microsoft Edge on Windows"
+    user_agent = parse(user_agent_string)
 
-    if "edg/" in user_agent and "android" in user_agent:
-        return "Microsoft Edge on Android"
+    browser = user_agent.browser.family or "Unknown Browser"
+    operating_system = user_agent.os.family or "Unknown OS"
 
-    if "chrome" in user_agent and "windows" in user_agent:
-        return "Chrome on Windows"
+    # Extra fallback for Opera because Opera often includes OPR/ in its user-agent
+    if "opr/" in lowered_user_agent or "opera" in lowered_user_agent:
+        browser = "Opera"
 
-    if "chrome" in user_agent and "android" in user_agent:
-        return "Chrome on Android"
+    if user_agent.is_mobile:
+        device_type = "Mobile"
+    elif user_agent.is_tablet:
+        device_type = "Tablet"
+    elif user_agent.is_pc:
+        device_type = "Desktop"
+    elif user_agent.is_bot:
+        device_type = "Bot"
+    else:
+        device_type = "Unknown Device"
 
-    if "firefox" in user_agent and "windows" in user_agent:
-        return "Firefox on Windows"
-
-    if "firefox" in user_agent and "android" in user_agent:
-        return "Firefox on Android"
-
-    if "safari" in user_agent and "iphone" in user_agent:
-        return "Safari on iPhone"
-
-    if "safari" in user_agent and "ipad" in user_agent:
-        return "Safari on iPad"
-
-    if "safari" in user_agent and "macintosh" in user_agent:
-        return "Safari on Mac"
-
-    if "android" in user_agent:
-        return "Android phone browser"
-
-    if "windows" in user_agent:
-        return "Windows browser"
-
-    if "iphone" in user_agent:
-        return "iPhone browser"
-
-    if "macintosh" in user_agent:
-        return "Mac browser"
-
-    return "Unknown browser/device"
+    return f"{browser} on {operating_system} ({device_type})"
 
 
 def is_device_online(ip_address, port, timeout=1):
