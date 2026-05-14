@@ -19,7 +19,8 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Helps Flask correctly read proxy headers from Railway
+# Railway runs your app behind a proxy.
+# This helps Flask read the real IP/protocol correctly.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.secret_key = os.getenv("SECRET_KEY")
@@ -31,23 +32,32 @@ if not app.secret_key:
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing.")
 
-# Session timeout settings
-# The app logs out the user after 1 hour.
-# The cookie gets a short grace period so the browser can still notify the server
-# and record a proper "Session Timeout" log before the session is cleared.
+# ============================================================
+# SESSION TIMEOUT SETTINGS
+# ============================================================
+# Main rule:
+# The user is considered logged out after exactly 1 hour.
+#
+# Cookie grace:
+# The browser cookie lasts a few minutes longer only so that when the user
+# comes back after 1 hour, the server can still identify the user and record
+# "Session Timeout" in the system logs.
+#
+# Even though the cookie lasts 65 minutes, the real login access stops at 60.
 SESSION_TIMEOUT_MINUTES = 60
-SESSION_COOKIE_GRACE_MINUTES = 2
+SESSION_COOKIE_GRACE_MINUTES = 5
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True",
 
-    # The real app timeout is enforced by session["expires_at"].
-    # The cookie lives slightly longer only so the server can still log the timeout event.
     PERMANENT_SESSION_LIFETIME=timedelta(
         minutes=SESSION_TIMEOUT_MINUTES + SESSION_COOKIE_GRACE_MINUTES
     ),
+
+    # Very important:
+    # /api/logs auto-refresh must NOT extend the session.
     SESSION_REFRESH_EACH_REQUEST=False
 )
 
@@ -64,14 +74,12 @@ CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
-# Login protection settings
 FAILED_LOGIN_LIMIT = 5
 FAILED_LOGIN_WINDOW_MINUTES = 5
 IP_BLOCK_MINUTES = 5
 ACCOUNT_LOCK_MINUTES = 5
 MAX_PASSWORD_LENGTH = 128
 
-# Only allow usernames like carlson, rafael, steven, patrick
 USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
 
 DEVICES = [
@@ -116,6 +124,7 @@ def get_session_expires_at():
             parsed_expires_at = parsed_expires_at.replace(tzinfo=timezone.utc)
 
         return parsed_expires_at
+
     except ValueError:
         return None
 
@@ -194,11 +203,9 @@ def get_device_info():
     browser = user_agent.browser.family or "Unknown Browser"
     operating_system = user_agent.os.family or "Unknown OS"
 
-    # Extra fallback for Opera because Opera often includes OPR/ or OPiOS.
     if "opr/" in lowered_user_agent or "opera" in lowered_user_agent or "opios" in lowered_user_agent:
         browser = "Opera"
 
-    # Extra fallback for iPadOS because iPads can report themselves as Mac OS X.
     is_ipad_disguised_as_mac = (
         "macintosh" in lowered_user_agent
         and "mobile" in lowered_user_agent
@@ -302,7 +309,8 @@ def add_log(event, username):
         "Blocked Login Attempt",
         "IP Temporarily Blocked",
         "Username Temporarily Locked",
-        "Invalid Username Format"
+        "Invalid Username Format",
+        "Session Timeout"
     ]:
         send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
@@ -549,6 +557,7 @@ def add_security_headers(response):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "img-src 'self' http: https: data:; "
@@ -560,6 +569,14 @@ def add_security_headers(response):
         "object-src 'none'; "
         "frame-ancestors 'none';"
     )
+
+    # Prevent the browser from showing an old dashboard after sleep,
+    # closed browser, or back button restore.
+    if request.endpoint != "static":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
     return response
 
 
@@ -578,9 +595,23 @@ def handle_csrf_error(error):
 
 @app.before_request
 def enforce_session_timeout():
-    if request.endpoint in ["login", "static"]:
+    open_endpoints = ["login", "static"]
+
+    if request.endpoint in open_endpoints:
         return None
 
+    # If the user has no valid session, force login.
+    if "user_id" not in session:
+        if request.path.startswith("/api/"):
+            return jsonify({
+                "authenticated": False,
+                "error": "Unauthorized"
+            }), 401
+
+        return redirect(url_for("login"))
+
+    # If the user has a session but the fixed 1-hour timer is done,
+    # log the timeout, clear the session, and force login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
 
@@ -664,10 +695,16 @@ def login():
             ).fetchone()
 
         if user and check_password_hash(user["password_hash"], password):
+            # Clear old session data first.
+            session.clear()
             session.permanent = True
+
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["device_info"] = detected_device_info
+
+            # Fixed absolute expiration.
+            # This does not move even if /api/logs refreshes every 2 seconds.
             session["expires_at"] = (
                 get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
             ).isoformat()
