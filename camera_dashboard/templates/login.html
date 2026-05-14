@@ -76,6 +76,7 @@
     <script>
         function detectDeviceInfo() {
             const ua = navigator.userAgent || "";
+            const uaLower = ua.toLowerCase();
             const platform = navigator.platform || "";
             const maxTouchPoints = navigator.maxTouchPoints || 0;
 
@@ -83,21 +84,33 @@
             let os = "Unknown OS";
             let deviceType = "Unknown Device";
 
-            if (ua.includes("OPR/") || ua.includes("Opera") || ua.includes("OPiOS")) {
+            const isIpad =
+                ua.includes("iPad") ||
+                (platform === "MacIntel" && maxTouchPoints > 1);
+
+            const isOpera =
+                ua.includes("OPR/") ||
+                ua.includes("Opera") ||
+                ua.includes("OPiOS") ||
+                ua.includes("OPT/") ||
+                ua.includes("OPRGX") ||
+                uaLower.includes("opera") ||
+                uaLower.includes("opios") ||
+                uaLower.includes("opr/") ||
+                uaLower.includes("opt/") ||
+                uaLower.includes("oprgx");
+
+            if (isOpera) {
                 browser = "Opera";
-            } else if (ua.includes("Edg/")) {
+            } else if (ua.includes("EdgiOS") || ua.includes("EdgA") || ua.includes("Edg/")) {
                 browser = "Microsoft Edge";
-            } else if (ua.includes("Chrome") || ua.includes("CriOS")) {
+            } else if (ua.includes("CriOS") || ua.includes("Chrome")) {
                 browser = "Chrome";
-            } else if (ua.includes("Firefox") || ua.includes("FxiOS")) {
+            } else if (ua.includes("FxiOS") || ua.includes("Firefox")) {
                 browser = "Firefox";
             } else if (ua.includes("Safari")) {
                 browser = "Safari";
             }
-
-            const isIpad =
-                ua.includes("iPad") ||
-                (platform === "MacIntel" && maxTouchPoints > 1);
 
             if (isIpad) {
                 os = "iPadOS";
