@@ -60,14 +60,14 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
-        .feed img {
+        /* Updated for iframe */
+        .feed iframe {
             width: 100%;
-            min-height: 300px;
-            background: #111;
-            border: 2px solid #333;
-            border-radius: 4px;
+            min-height: 400px;
+            background: #000;
+            border: none;
+            border-radius: 8px;
             display: block;
-            object-fit: contain;
         }
 
         #cameraStatus {
@@ -140,10 +140,12 @@
         <div class="card feed">
             <h3>Live Camera Feed</h3>
 
-            <img id="cctvFeed" src="/camera/snapshot" alt="Live Camera Feed"
-                 onerror="this.alt='Camera unavailable'; document.getElementById('cameraStatus').textContent='Camera unavailable. Check connection.';">
+            <iframe 
+                src="http://YOUR_SERVER_IP:8889/dlink-cam" 
+                allowfullscreen>
+            </iframe>
 
-            <p id="cameraStatus">Live feed from IP Camera (192.168.1.9)</p>
+            <p id="cameraStatus">Live WebRTC feed from IP Camera (192.168.1.9)</p>
         </div>
 
         <div>
@@ -217,26 +219,12 @@
         let sessionTimeoutTimer = null;
         let logRefreshInterval = null;
         let sessionCheckInterval = null;
-        let cameraRefreshInterval = null;
         let alreadyHandlingExpiredSession = false;
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
 
-        function refreshCameraFeed() {
-            const img = document.getElementById("cctvFeed");
-            if (img) {
-                img.src = "/camera/snapshot?t=" + Date.now();
-            }
-        }
-
-        function startCameraRefresh() {
-            refreshCameraFeed();
-            cameraRefreshInterval = setInterval(refreshCameraFeed, 3000);
-        }
-
         function showSessionTimeoutNotice() {
             const notice = document.getElementById("sessionTimeoutNotice");
-
             if (notice) {
                 notice.style.display = "block";
             }
@@ -252,7 +240,6 @@
             clearTimeout(sessionTimeoutTimer);
             clearInterval(logRefreshInterval);
             clearInterval(sessionCheckInterval);
-            clearInterval(cameraRefreshInterval);
             showSessionTimeoutNotice();
 
             setTimeout(function () {
@@ -262,7 +249,6 @@
 
         function updateLogRefreshStatus(message) {
             const status = document.getElementById("logsRefreshStatus");
-
             if (status) {
                 status.textContent = message;
             }
@@ -340,11 +326,9 @@
 
         function createTextCell(text, className = "") {
             const cell = document.createElement("td");
-
             if (className) {
                 cell.className = className;
             }
-
             cell.textContent = text || "N/A";
             return cell;
         }
@@ -424,9 +408,7 @@
 
         function startLogPolling() {
             clearInterval(logRefreshInterval);
-
             refreshSystemLogs();
-
             logRefreshInterval = setInterval(function () {
                 refreshSystemLogs();
             }, 2000);
@@ -434,17 +416,14 @@
 
         function startSessionChecking() {
             clearInterval(sessionCheckInterval);
-
             checkSessionStatus();
             scheduleSessionTimeout(initialSessionSecondsRemaining);
-
             sessionCheckInterval = setInterval(function () {
                 checkSessionStatus();
             }, 10000);
         }
 
         window.addEventListener("load", function () {
-            startCameraRefresh();
             startLogPolling();
             startSessionChecking();
         });
