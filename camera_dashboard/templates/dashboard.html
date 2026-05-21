@@ -60,14 +60,36 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
-        /* Updated for iframe */
-        .feed iframe {
+        .feed video {
             width: 100%;
-            min-height: 400px;
-            background: #000;
+            min-height: 300px;
+            background: #111;
+            border: 2px solid #333;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .camera-button {
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
             border: none;
-            border-radius: 8px;
-            display: block;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-top: 10px;
+        }
+
+        .camera-button:hover {
+            background-color: #0056b3;
+        }
+
+        .stop-button {
+            background-color: #ff4d4d;
+        }
+
+        .stop-button:hover {
+            background-color: #cc0000;
         }
 
         #cameraStatus {
@@ -140,12 +162,19 @@
         <div class="card feed">
             <h3>Live Camera Feed</h3>
 
-            <iframe 
-                src="https://YOUR-SECURE-TUNNEL-LINK-HERE/dlink-cam" 
-                allowfullscreen>
-            </iframe>
+            <video id="userCamera" autoplay playsinline muted></video>
 
-            <p id="cameraStatus">Live WebRTC feed from IP Camera (192.168.1.9)</p>
+            <p id="cameraStatus">
+                Starting camera...
+            </p>
+
+            <button type="button" class="camera-button" onclick="startCamera()">
+                Start Camera
+            </button>
+
+            <button type="button" class="camera-button stop-button" onclick="stopCamera()">
+                Stop Camera
+            </button>
         </div>
 
         <div>
@@ -170,9 +199,11 @@
                     {% endfor %}
 
                     <tr>
-                        <td>IP Camera (DCS-8300LHV2)</td>
-                        <td class="ip-cell">192.168.1.9</td>
-                        <td id="ipCameraStatus" class="status-up">Online</td>
+                        <td>Logged-in Device Camera</td>
+                        <td class="ip-cell">{{ client_ip }}</td>
+                        <td id="browserCameraDeviceStatus" class="status-down">
+                            Offline / Permission Required
+                        </td>
                     </tr>
                 </table>
             </div>
@@ -216,6 +247,7 @@
     </div>
 
     <script>
+        let activeCameraStream = null;
         let sessionTimeoutTimer = null;
         let logRefreshInterval = null;
         let sessionCheckInterval = null;
@@ -223,8 +255,94 @@
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
 
+        function setBrowserCameraDeviceStatus(isOnline, message) {
+            const deviceStatus = document.getElementById("browserCameraDeviceStatus");
+
+            if (!deviceStatus) {
+                return;
+            }
+
+            deviceStatus.textContent = message;
+
+            if (isOnline) {
+                deviceStatus.classList.remove("status-down");
+                deviceStatus.classList.add("status-up");
+            } else {
+                deviceStatus.classList.remove("status-up");
+                deviceStatus.classList.add("status-down");
+            }
+        }
+
+        async function startCamera() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("cameraStatus");
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                video.style.display = "none";
+                status.textContent = "Camera access is not supported by this browser.";
+                setBrowserCameraDeviceStatus(false, "Unsupported Browser");
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+
+                activeCameraStream = stream;
+                video.srcObject = stream;
+                video.style.display = "block";
+
+                status.textContent = "Camera is active. This preview is only from your current device.";
+                setBrowserCameraDeviceStatus(true, "Online");
+
+            } catch (error) {
+                video.style.display = "none";
+
+                if (error.name === "NotAllowedError") {
+                    status.textContent = "Camera permission denied. Click Start Camera and allow camera access.";
+                    setBrowserCameraDeviceStatus(false, "Permission Denied");
+                } else if (error.name === "NotFoundError") {
+                    status.textContent = "No camera device found.";
+                    setBrowserCameraDeviceStatus(false, "No Camera Found");
+                } else if (error.name === "NotReadableError") {
+                    status.textContent = "Camera is already being used by another app.";
+                    setBrowserCameraDeviceStatus(false, "Camera In Use");
+                } else {
+                    status.textContent = "Unable to access camera.";
+                    setBrowserCameraDeviceStatus(false, "Offline / Not Detected");
+                }
+            }
+        }
+
+        function stopCamera() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("cameraStatus");
+
+            if (activeCameraStream) {
+                activeCameraStream.getTracks().forEach(function(track) {
+                    track.stop();
+                });
+
+                activeCameraStream = null;
+            }
+
+            if (video) {
+                video.srcObject = null;
+                video.style.display = "none";
+            }
+
+            if (status) {
+                status.textContent = "Camera stopped.";
+            }
+
+            setBrowserCameraDeviceStatus(false, "Offline / Stopped");
+        }
+
         function showSessionTimeoutNotice() {
             const notice = document.getElementById("sessionTimeoutNotice");
+
             if (notice) {
                 notice.style.display = "block";
             }
@@ -240,6 +358,8 @@
             clearTimeout(sessionTimeoutTimer);
             clearInterval(logRefreshInterval);
             clearInterval(sessionCheckInterval);
+
+            stopCamera();
             showSessionTimeoutNotice();
 
             setTimeout(function () {
@@ -249,6 +369,7 @@
 
         function updateLogRefreshStatus(message) {
             const status = document.getElementById("logsRefreshStatus");
+
             if (status) {
                 status.textContent = message;
             }
@@ -326,9 +447,11 @@
 
         function createTextCell(text, className = "") {
             const cell = document.createElement("td");
+
             if (className) {
                 cell.className = className;
             }
+
             cell.textContent = text || "N/A";
             return cell;
         }
@@ -408,7 +531,9 @@
 
         function startLogPolling() {
             clearInterval(logRefreshInterval);
+
             refreshSystemLogs();
+
             logRefreshInterval = setInterval(function () {
                 refreshSystemLogs();
             }, 2000);
@@ -416,14 +541,17 @@
 
         function startSessionChecking() {
             clearInterval(sessionCheckInterval);
+
             checkSessionStatus();
             scheduleSessionTimeout(initialSessionSecondsRemaining);
+
             sessionCheckInterval = setInterval(function () {
                 checkSessionStatus();
             }, 10000);
         }
 
         window.addEventListener("load", function () {
+            startCamera();
             startLogPolling();
             startSessionChecking();
         });

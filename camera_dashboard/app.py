@@ -36,6 +36,14 @@ if not DATABASE_URL:
 # ============================================================
 # SESSION TIMEOUT SETTINGS
 # ============================================================
+# Main rule:
+# User access expires after exactly 1 hour.
+#
+# Cookie grace:
+# Cookie lasts slightly longer so when an expired user returns,
+# the server can still identify the user and record "Session Timeout".
+#
+# Even though cookie lasts 65 minutes, actual dashboard access ends at 60.
 SESSION_TIMEOUT_MINUTES = 60
 SESSION_COOKIE_GRACE_MINUTES = 5
 
@@ -48,11 +56,17 @@ app.config.update(
         minutes=SESSION_TIMEOUT_MINUTES + SESSION_COOKIE_GRACE_MINUTES
     ),
 
+    # Very important:
+    # /api/logs auto-refresh must NOT extend the session.
     SESSION_REFRESH_EACH_REQUEST=False
 )
 
 csrf = CSRFProtect(app)
 
+# IMPORTANT:
+# Do NOT put global limits here like ["200 per day", "50 per hour"].
+# Real-time logs call /api/logs every 2 seconds, so global limits will break it.
+# We only rate-limit the login POST route below.
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -64,23 +78,8 @@ limiter = Limiter(
 # ENVIRONMENT VARIABLES / SETTINGS
 # ============================================================
 
-CAMERA_IP       = os.getenv("CAMERA_IP", "192.168.1.9")
-CAMERA_PORT     = int(os.getenv("CAMERA_PORT", 80))
-CAMERA_USER     = os.getenv("CAMERA_USER", "admin")
-CAMERA_PASS     = os.getenv("CAMERA_PASS", "")
-
-# Override the full snapshot path via CAMERA_SNAPSHOT_PATH if needed.
-# DCS-8300LHV2 common paths:
-#   /image/jpeg.cgi  ← most likely
-#   /snapshot.jpg
-#   /video/mjpg.cgi  ← MJPEG stream
-CAMERA_SNAPSHOT_PATH = os.getenv("CAMERA_SNAPSHOT_PATH", "/image/jpeg.cgi")
-
-# Build the full URL, with credentials if provided.
-if CAMERA_USER and CAMERA_PASS:
-    CAMERA_URL = f"http://{CAMERA_USER}:{CAMERA_PASS}@{CAMERA_IP}:{CAMERA_PORT}{CAMERA_SNAPSHOT_PATH}"
-else:
-    CAMERA_URL = f"http://{CAMERA_IP}:{CAMERA_PORT}{CAMERA_SNAPSHOT_PATH}"
+CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
+CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -105,8 +104,8 @@ DEVICES = [
     },
     {
         "name": "IP Camera",
-        "ip": CAMERA_IP,
-        "port": CAMERA_PORT,
+        "ip": os.getenv("CAMERA_IP", "192.168.1.10"),
+        "port": int(os.getenv("CAMERA_PORT", 80)),
     },
 ]
 
@@ -205,8 +204,12 @@ def get_device_info():
     lowered_user_agent = user_agent_string.lower()
 
     script_tools = [
-        "curl", "python-requests", "httpie",
-        "postman", "wget", "go-http-client"
+        "curl",
+        "python-requests",
+        "httpie",
+        "postman",
+        "wget",
+        "go-http-client"
     ]
 
     if any(tool in lowered_user_agent for tool in script_tools):
@@ -265,7 +268,9 @@ def send_discord_alert(event, username, ip_address, device_info, timestamp):
             f"Device/Browser: `{safe_device}`\n"
             f"Time: `{timestamp}`"
         ),
-        "allowed_mentions": {"parse": []}
+        "allowed_mentions": {
+            "parse": []
+        }
     }
 
     try:
@@ -332,34 +337,6 @@ def get_device_statuses():
 
 
 # ============================================================
-# CAMERA PROXY ROUTE
-# Fetches the snapshot server-side so the browser never needs
-# direct access to the camera's local IP.
-# ============================================================
-
-@app.route("/api/camera-feed")
-def camera_feed():
-    if "user_id" not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    try:
-        auth = (CAMERA_USER, CAMERA_PASS) if CAMERA_USER and CAMERA_PASS else None
-        resp = requests.get(CAMERA_URL, timeout=5, auth=auth, stream=True)
-
-        if resp.status_code == 200:
-            from flask import Response
-            return Response(
-                resp.content,
-                content_type=resp.headers.get("Content-Type", "image/jpeg")
-            )
-        else:
-            return jsonify({"error": f"Camera returned {resp.status_code}"}), 502
-
-    except requests.RequestException as e:
-        return jsonify({"error": str(e)}), 503
-
-
-# ============================================================
 # LOGIN PROTECTION HELPERS
 # ============================================================
 
@@ -368,12 +345,14 @@ def is_ip_blocked(ip_address):
 
     with get_db_connection() as conn:
         conn.execute(
-            "DELETE FROM blocked_ips WHERE blocked_until <= %s", (now,)
+            "DELETE FROM blocked_ips WHERE blocked_until <= %s",
+            (now,)
         )
 
         blocked_ip = conn.execute(
             """
-            SELECT blocked_until FROM blocked_ips
+            SELECT blocked_until
+            FROM blocked_ips
             WHERE ip_address = %s AND blocked_until > %s
             """,
             (ip_address, now)
@@ -388,12 +367,14 @@ def is_username_locked(username):
 
     with get_db_connection() as conn:
         conn.execute(
-            "DELETE FROM locked_accounts WHERE locked_until <= %s", (now,)
+            "DELETE FROM locked_accounts WHERE locked_until <= %s",
+            (now,)
         )
 
         locked_username = conn.execute(
             """
-            SELECT locked_until FROM locked_accounts
+            SELECT locked_until
+            FROM locked_accounts
             WHERE username = %s AND locked_until > %s
             """,
             (safe_username, now)
@@ -410,7 +391,10 @@ def record_failed_attempt(username, ip_address):
 
     safe_username = clean_log_value(username, "invalid_username", 50)
 
-    result = {"ip_blocked": False, "username_locked": False}
+    result = {
+        "ip_blocked": False,
+        "username_locked": False
+    }
 
     with get_db_connection() as conn:
         conn.execute(
@@ -422,13 +406,17 @@ def record_failed_attempt(username, ip_address):
         )
 
         conn.execute(
-            "DELETE FROM failed_login_attempts WHERE attempted_at < %s",
+            """
+            DELETE FROM failed_login_attempts
+            WHERE attempted_at < %s
+            """,
             (now - timedelta(hours=24),)
         )
 
         failed_ip_count = conn.execute(
             """
-            SELECT COUNT(*) AS count FROM failed_login_attempts
+            SELECT COUNT(*) AS count
+            FROM failed_login_attempts
             WHERE ip_address = %s AND attempted_at >= %s
             """,
             (ip_address, window_start)
@@ -436,7 +424,8 @@ def record_failed_attempt(username, ip_address):
 
         failed_username_count = conn.execute(
             """
-            SELECT COUNT(*) AS count FROM failed_login_attempts
+            SELECT COUNT(*) AS count
+            FROM failed_login_attempts
             WHERE username = %s AND attempted_at >= %s
             """,
             (safe_username, window_start)
@@ -448,10 +437,17 @@ def record_failed_attempt(username, ip_address):
                 INSERT INTO blocked_ips (ip_address, blocked_until, reason)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (ip_address)
-                DO UPDATE SET blocked_until = EXCLUDED.blocked_until, reason = EXCLUDED.reason
+                DO UPDATE SET
+                    blocked_until = EXCLUDED.blocked_until,
+                    reason = EXCLUDED.reason
                 """,
-                (ip_address, ip_blocked_until, "Too many failed login attempts from this IP")
+                (
+                    ip_address,
+                    ip_blocked_until,
+                    "Too many failed login attempts from this IP"
+                )
             )
+
             result["ip_blocked"] = True
 
         if safe_username not in ["UNKNOWN", "invalid_username"] and failed_username_count >= FAILED_LOGIN_LIMIT:
@@ -460,10 +456,17 @@ def record_failed_attempt(username, ip_address):
                 INSERT INTO locked_accounts (username, locked_until, reason)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (username)
-                DO UPDATE SET locked_until = EXCLUDED.locked_until, reason = EXCLUDED.reason
+                DO UPDATE SET
+                    locked_until = EXCLUDED.locked_until,
+                    reason = EXCLUDED.reason
                 """,
-                (safe_username, username_locked_until, "Too many failed login attempts for this username")
+                (
+                    safe_username,
+                    username_locked_until,
+                    "Too many failed login attempts for this username"
+                )
             )
+
             result["username_locked"] = True
 
     return result
@@ -474,7 +477,10 @@ def clear_failed_attempts(ip_address, username):
 
     with get_db_connection() as conn:
         conn.execute(
-            "DELETE FROM failed_login_attempts WHERE ip_address = %s OR username = %s",
+            """
+            DELETE FROM failed_login_attempts
+            WHERE ip_address = %s OR username = %s
+            """,
             (ip_address, safe_username)
         )
 
@@ -505,11 +511,13 @@ def initialize_database():
         """)
 
         conn.execute("""
-            ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(100);
+            ALTER TABLE system_logs
+            ADD COLUMN IF NOT EXISTS ip_address VARCHAR(100);
         """)
 
         conn.execute("""
-            ALTER TABLE system_logs ADD COLUMN IF NOT EXISTS browser_info VARCHAR(150);
+            ALTER TABLE system_logs
+            ADD COLUMN IF NOT EXISTS browser_info VARCHAR(150);
         """)
 
         conn.execute("""
@@ -595,6 +603,8 @@ def add_security_headers(response):
         "frame-ancestors 'none';"
     )
 
+    # Prevent browser from showing an old cached dashboard after sleep,
+    # closed browser, back button, or restored tab.
     if request.endpoint != "static":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -623,18 +633,29 @@ def enforce_session_timeout():
     if request.endpoint in open_endpoints:
         return None
 
+    # If user has no valid session, force login.
     if "user_id" not in session:
         if request.path.startswith("/api/"):
-            return jsonify({"authenticated": False, "error": "Unauthorized"}), 401
+            return jsonify({
+                "authenticated": False,
+                "error": "Unauthorized"
+            }), 401
+
         return redirect(url_for("login"))
 
+    # If user has a session but the fixed 1-hour timer is done,
+    # log timeout, clear session, and force login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
+
         add_log("Session Timeout", username)
         session.clear()
 
         if request.path.startswith("/api/"):
-            return jsonify({"authenticated": False, "error": "Session expired"}), 401
+            return jsonify({
+                "authenticated": False,
+                "error": "Session expired"
+            }), 401
 
         flash("Your session timed out. Please log in again.")
         return redirect(url_for("login"))
@@ -650,6 +671,7 @@ def enforce_session_timeout():
 def index():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
+
     return redirect(url_for("login"))
 
 
@@ -669,6 +691,7 @@ def login():
 
         if not is_valid_username(username):
             add_log("Invalid Username Format", username or "EMPTY")
+
             block_result = record_failed_attempt("invalid_username", ip_address)
 
             if block_result["ip_blocked"]:
@@ -686,6 +709,7 @@ def login():
 
         if len(password) < 1 or len(password) > MAX_PASSWORD_LENGTH:
             add_log("Failed Login Attempt", username)
+
             block_result = record_failed_attempt(username, ip_address)
 
             if block_result["ip_blocked"]:
@@ -708,21 +732,28 @@ def login():
             ).fetchone()
 
         if user and check_password_hash(user["password_hash"], password):
+            # Clear old session data first.
             session.clear()
             session.permanent = True
+
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["device_info"] = detected_device_info
+
+            # Fixed absolute expiration.
+            # This does not move even if /api/logs refreshes every 2 seconds.
             session["expires_at"] = (
                 get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
             ).isoformat()
 
             clear_failed_attempts(ip_address, username)
             add_log("Successful Login", username)
+
             return redirect(url_for("dashboard"))
 
         flash("Invalid credentials. Please try again.")
         add_log("Failed Login Attempt", username)
+
         block_result = record_failed_attempt(username, ip_address)
 
         if block_result["ip_blocked"]:
@@ -746,6 +777,7 @@ def logout():
         add_log("Logout", username)
 
     session.clear()
+
     return redirect(url_for("login"))
 
 
@@ -753,7 +785,10 @@ def logout():
 @limiter.exempt
 def api_session_status():
     if "user_id" not in session:
-        return jsonify({"authenticated": False, "error": "Unauthorized"}), 401
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
 
     return jsonify({
         "authenticated": True,
@@ -765,7 +800,10 @@ def api_session_status():
 @limiter.exempt
 def api_logs():
     if "user_id" not in session:
-        return jsonify({"authenticated": False, "error": "Unauthorized"}), 401
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
 
     with get_db_connection() as conn:
         logs = conn.execute(
@@ -797,7 +835,7 @@ def dashboard():
 
     return render_template(
         "dashboard.html",
-        camera_url="/api/camera-feed",
+        camera_url=CAMERA_URL,
         logs=logs,
         devices=get_device_statuses(),
         client_ip=get_client_ip(),
