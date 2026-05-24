@@ -805,17 +805,44 @@ def api_logs():
             "error": "Unauthorized"
         }), 401
 
+    try:
+        limit = int(request.args.get("limit", 50))
+        offset = int(request.args.get("offset", 0))
+    except ValueError:
+        limit = 50
+        offset = 0
+
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+
+    jump_to_oldest = request.args.get("oldest", "false").lower() == "true"
+
     with get_db_connection() as conn:
+        total_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM system_logs"
+        ).fetchone()["count"]
+
+        if jump_to_oldest:
+            offset = max(total_count - limit, 0)
+
         logs = conn.execute(
             """
             SELECT time, username AS user, event, ip_address, browser_info
             FROM system_logs
             ORDER BY id DESC
-            LIMIT 50
-            """
+            LIMIT %s OFFSET %s
+            """,
+            (limit, offset)
         ).fetchall()
 
-    return jsonify([dict(log) for log in logs])
+    return jsonify({
+        "logs": [dict(log) for log in logs],
+        "limit": limit,
+        "offset": offset,
+        "total_count": total_count,
+        "has_newer": offset > 0,
+        "has_older": offset + limit < total_count
+    })
 
 
 @app.route("/dashboard")

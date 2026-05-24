@@ -215,33 +215,57 @@
                     Waiting for real-time logs...
                 </div>
 
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>User</th>
-                            <th>Event</th>
-                            <th>IP Address</th>
-                            <th>Device/Browser</th>
-                        </tr>
-                    </thead>
+                <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+                    <button type="button" class="camera-button" onclick="goToLatestLogs()">
+                        &lt;&lt; Latest
+                    </button>
 
-                    <tbody id="logsTableBody">
-                        {% for log in logs %}
-                        {% set time_parts = log.time.split(" ") %}
-                        <tr>
-                            <td class="time-cell">
-                                {{ time_parts[0] }}<br>
-                                {{ time_parts[1] if time_parts|length > 1 else "" }}
-                            </td>
-                            <td>{{ log.user }}</td>
-                            <td>{{ log.event }}</td>
-                            <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
-                            <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                    <button type="button" class="camera-button" onclick="goToNewerLogs()">
+                        &lt; Newer
+                    </button>
+
+                    <button type="button" class="camera-button" onclick="goToOlderLogs()">
+                        Older &gt;
+                    </button>
+
+                    <button type="button" class="camera-button" onclick="goToOldestLogs()">
+                        Oldest &gt;&gt;
+                    </button>
+                </div>
+
+                <div id="logsPageStatus" class="log-refresh-status">
+                    Showing latest logs.
+                </div>
+
+                <div style="max-height: 520px; overflow-y: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>User</th>
+                                <th>Event</th>
+                                <th>IP Address</th>
+                                <th>Device/Browser</th>
+                            </tr>
+                        </thead>
+
+                        <tbody id="logsTableBody">
+                            {% for log in logs %}
+                            {% set time_parts = log.time.split(" ") %}
+                            <tr>
+                                <td class="time-cell">
+                                    {{ time_parts[0] }}<br>
+                                    {{ time_parts[1] if time_parts|length > 1 else "" }}
+                                </td>
+                                <td>{{ log.user }}</td>
+                                <td>{{ log.event }}</td>
+                                <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
+                                <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -252,6 +276,11 @@
         let logRefreshInterval = null;
         let sessionCheckInterval = null;
         let alreadyHandlingExpiredSession = false;
+
+        let currentLogsOffset = 0;
+        let logsLimit = 50;
+        let totalLogsCount = 0;
+        let viewingLatestLogs = true;
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
 
@@ -375,6 +404,14 @@
             }
         }
 
+        function updateLogsPageStatus(message) {
+            const status = document.getElementById("logsPageStatus");
+
+            if (status) {
+                status.textContent = message;
+            }
+        }
+
         function scheduleSessionTimeout(secondsRemaining) {
             clearTimeout(sessionTimeoutTimer);
 
@@ -471,13 +508,26 @@
             return cell;
         }
 
-        async function refreshSystemLogs() {
+        async function refreshSystemLogs(forceRefresh = false, jumpToOldest = false) {
             if (alreadyHandlingExpiredSession) {
                 return;
             }
 
+            if (!viewingLatestLogs && !forceRefresh) {
+                updateLogRefreshStatus(
+                    "Viewing older logs. Real-time updates resume when you click << Latest."
+                );
+                return;
+            }
+
             try {
-                const response = await fetch("/api/logs?t=" + Date.now(), {
+                let logsUrl = "/api/logs?limit=" + logsLimit + "&offset=" + currentLogsOffset + "&t=" + Date.now();
+
+                if (jumpToOldest) {
+                    logsUrl = "/api/logs?limit=" + logsLimit + "&oldest=true&t=" + Date.now();
+                }
+
+                const response = await fetch(logsUrl, {
                     method: "GET",
                     cache: "no-store",
                     credentials: "same-origin"
@@ -494,7 +544,12 @@
                     return;
                 }
 
-                const logs = await response.json();
+                const data = await response.json();
+                const logs = data.logs || [];
+
+                currentLogsOffset = data.offset || 0;
+                totalLogsCount = data.total_count || 0;
+
                 const tableBody = document.getElementById("logsTableBody");
 
                 if (!tableBody) {
@@ -517,9 +572,26 @@
                     tableBody.appendChild(row);
                 });
 
-                updateLogRefreshStatus(
-                    "Real-time logs active. Last updated: " + new Date().toLocaleTimeString()
-                );
+                const startLogNumber = totalLogsCount === 0 ? 0 : currentLogsOffset + 1;
+                const endLogNumber = Math.min(currentLogsOffset + logsLimit, totalLogsCount);
+
+                if (viewingLatestLogs) {
+                    updateLogsPageStatus(
+                        "Showing latest logs " + startLogNumber + " to " + endLogNumber + " of " + totalLogsCount + "."
+                    );
+
+                    updateLogRefreshStatus(
+                        "Real-time logs active. Last updated: " + new Date().toLocaleTimeString()
+                    );
+                } else {
+                    updateLogsPageStatus(
+                        "Showing older logs " + startLogNumber + " to " + endLogNumber + " of " + totalLogsCount + "."
+                    );
+
+                    updateLogRefreshStatus(
+                        "Viewing older logs. Real-time updates resume when you click << Latest."
+                    );
+                }
 
                 console.log("System logs refreshed:", new Date().toLocaleTimeString());
 
@@ -529,13 +601,46 @@
             }
         }
 
+        function goToLatestLogs() {
+            currentLogsOffset = 0;
+            viewingLatestLogs = true;
+            refreshSystemLogs(true, false);
+        }
+
+        function goToOlderLogs() {
+            if (currentLogsOffset + logsLimit >= totalLogsCount) {
+                return;
+            }
+
+            currentLogsOffset += logsLimit;
+            viewingLatestLogs = false;
+            refreshSystemLogs(true, false);
+        }
+
+        function goToNewerLogs() {
+            currentLogsOffset = Math.max(0, currentLogsOffset - logsLimit);
+
+            if (currentLogsOffset === 0) {
+                viewingLatestLogs = true;
+            } else {
+                viewingLatestLogs = false;
+            }
+
+            refreshSystemLogs(true, false);
+        }
+
+        function goToOldestLogs() {
+            viewingLatestLogs = false;
+            refreshSystemLogs(true, true);
+        }
+
         function startLogPolling() {
             clearInterval(logRefreshInterval);
 
-            refreshSystemLogs();
+            refreshSystemLogs(true, false);
 
             logRefreshInterval = setInterval(function () {
-                refreshSystemLogs();
+                refreshSystemLogs(false, false);
             }, 2000);
         }
 
@@ -558,19 +663,19 @@
 
         window.addEventListener("focus", function () {
             checkSessionStatus();
-            refreshSystemLogs();
+            refreshSystemLogs(false, false);
         });
 
         document.addEventListener("visibilitychange", function () {
             if (!document.hidden) {
                 checkSessionStatus();
-                refreshSystemLogs();
+                refreshSystemLogs(false, false);
             }
         });
 
         window.addEventListener("pageshow", function () {
             checkSessionStatus();
-            refreshSystemLogs();
+            refreshSystemLogs(false, false);
         });
     </script>
 
