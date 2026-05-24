@@ -124,7 +124,7 @@
         .log-scroll-box {
             max-height: 520px;
             overflow-y: auto;
-            overflow-x: auto;
+            overflow-x: hidden;
             border: 1px solid #eee;
             border-radius: 6px;
             max-width: 100%;
@@ -150,7 +150,7 @@
 
         .logs-table {
             width: 100%;
-            min-width: 760px;
+            min-width: 0;
             table-layout: fixed;
             margin-top: 0;
         }
@@ -158,7 +158,10 @@
         .logs-table th,
         .logs-table td {
             overflow-wrap: break-word;
-            word-break: break-word;
+            word-break: normal;
+            white-space: normal;
+            font-size: 0.82em;
+            padding: 7px;
         }
 
         .logs-table th:nth-child(1),
@@ -168,22 +171,22 @@
 
         .logs-table th:nth-child(2),
         .logs-table td:nth-child(2) {
-            width: 14%;
+            width: 13%;
         }
 
         .logs-table th:nth-child(3),
         .logs-table td:nth-child(3) {
-            width: 22%;
+            width: 23%;
         }
 
         .logs-table th:nth-child(4),
         .logs-table td:nth-child(4) {
-            width: 18%;
+            width: 17%;
         }
 
         .logs-table th:nth-child(5),
         .logs-table td:nth-child(5) {
-            width: 30%;
+            width: 31%;
         }
 
         .status-up {
@@ -206,6 +209,8 @@
 
         .browser-cell {
             white-space: normal;
+            overflow-wrap: break-word;
+            word-break: normal;
         }
     </style>
 </head>
