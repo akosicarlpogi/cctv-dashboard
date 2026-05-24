@@ -105,6 +105,21 @@
             margin-bottom: 8px;
         }
 
+        .log-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .log-scroll-box {
+            max-height: 520px;
+            overflow-y: auto;
+            overflow-x: auto;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -119,6 +134,48 @@
             vertical-align: top;
         }
 
+        .device-table {
+            table-layout: fixed;
+        }
+
+        .logs-table {
+            width: 100%;
+            min-width: 760px;
+            table-layout: fixed;
+            margin-top: 0;
+        }
+
+        .logs-table th,
+        .logs-table td {
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .logs-table th:nth-child(1),
+        .logs-table td:nth-child(1) {
+            width: 16%;
+        }
+
+        .logs-table th:nth-child(2),
+        .logs-table td:nth-child(2) {
+            width: 14%;
+        }
+
+        .logs-table th:nth-child(3),
+        .logs-table td:nth-child(3) {
+            width: 22%;
+        }
+
+        .logs-table th:nth-child(4),
+        .logs-table td:nth-child(4) {
+            width: 18%;
+        }
+
+        .logs-table th:nth-child(5),
+        .logs-table td:nth-child(5) {
+            width: 30%;
+        }
+
         .status-up {
             color: green;
             font-weight: bold;
@@ -130,15 +187,15 @@
         }
 
         .time-cell {
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .ip-cell {
-            white-space: nowrap;
+            white-space: normal;
         }
 
         .browser-cell {
-            min-width: 120px;
+            white-space: normal;
         }
     </style>
 </head>
@@ -181,7 +238,7 @@
             <div class="card" style="margin-bottom: 20px;">
                 <h3>Connected Devices</h3>
 
-                <table>
+                <table class="device-table">
                     <tr>
                         <th>Device</th>
                         <th>IP Address</th>
@@ -215,7 +272,7 @@
                     Waiting for real-time logs...
                 </div>
 
-                <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+                <div class="log-buttons">
                     <button type="button" class="camera-button" onclick="goToLatestLogs()">
                         &lt;&lt; Latest
                     </button>
@@ -237,8 +294,8 @@
                     Showing latest logs.
                 </div>
 
-                <div style="max-height: 520px; overflow-y: auto;">
-                    <table>
+                <div class="log-scroll-box">
+                    <table class="logs-table">
                         <thead>
                             <tr>
                                 <th>Time</th>
