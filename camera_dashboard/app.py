@@ -45,7 +45,7 @@ if not DATABASE_URL:
 #
 # Even though cookie lasts 65 minutes, actual dashboard access ends at 60.
 SESSION_TIMEOUT_MINUTES = 60
-SESSION_COOKIE_GRACE_MINUTES = 5
+SESSION_COOKIE_GRACE_MINUTES = 1440
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -676,7 +676,7 @@ def index():
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("30 per minute", methods=["POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
