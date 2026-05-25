@@ -639,23 +639,13 @@ def handle_csrf_error(error):
 
 @app.before_request
 def enforce_session_timeout():
-    open_endpoints = ["login", "static"]
-
-    if request.endpoint in open_endpoints:
+    # Always ignore static files.
+    if request.endpoint == "static":
         return None
 
-    # If user has no valid session, force login.
-    if "user_id" not in session:
-        if request.path.startswith("/api/"):
-            return jsonify({
-                "authenticated": False,
-                "error": "Unauthorized"
-            }), 401
-
-        return redirect(url_for("login"))
-
-    # If user has a session but the fixed 1-hour timer is done,
-    # log timeout, clear session, and force login.
+    # Important:
+    # Check expired sessions BEFORE allowing /login.
+    # This lets the system log "Session Timeout" even if the user returns directly to login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
         timeout_event = get_session_timeout_event_text()
@@ -669,7 +659,28 @@ def enforce_session_timeout():
                 "error": "Session expired"
             }), 401
 
+        # If the expired user is already on /login,
+        # allow the login page to load normally after logging the timeout.
+        if request.endpoint == "login":
+            return None
+
         flash("Your session timed out. Please log in again.")
+        return redirect(url_for("login"))
+
+    # Login page is open only AFTER expired-session checking.
+    open_endpoints = ["login"]
+
+    if request.endpoint in open_endpoints:
+        return None
+
+    # If user has no valid session, force login.
+    if "user_id" not in session:
+        if request.path.startswith("/api/"):
+            return jsonify({
+                "authenticated": False,
+                "error": "Unauthorized"
+            }), 401
+
         return redirect(url_for("login"))
 
     return None
