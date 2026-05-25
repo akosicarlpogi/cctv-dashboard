@@ -40,12 +40,13 @@ if not DATABASE_URL:
 # User access expires after exactly 1 hour.
 #
 # Cookie grace:
-# Cookie lasts slightly longer so when an expired user returns,
+# Cookie lasts longer so when an expired user returns,
 # the server can still identify the user and record "Session Timeout".
 #
-# Even though cookie lasts 65 minutes, actual dashboard access ends at 60.
+# Even though cookie lasts around 3 days after the 1-hour access,
+# actual dashboard access still ends after 60 minutes.
 SESSION_TIMEOUT_MINUTES = 60
-SESSION_COOKIE_GRACE_MINUTES = 1440
+SESSION_COOKIE_GRACE_MINUTES = 4320
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -154,6 +155,17 @@ def get_session_seconds_remaining():
 
 def is_current_session_expired():
     return "user_id" in session and get_session_seconds_remaining() <= 0
+
+
+def get_session_timeout_event_text():
+    expires_at = get_session_expires_at()
+
+    if not expires_at:
+        return "Session Timeout"
+
+    expired_at_ph = expires_at.astimezone(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    return f"Session Timeout - expired at {expired_at_ph}"
 
 
 # ============================================================
@@ -302,9 +314,8 @@ def add_log(event, username):
         "Blocked Login Attempt",
         "IP Temporarily Blocked",
         "Username Temporarily Locked",
-        "Invalid Username Format",
-        "Session Timeout"
-    ]:
+        "Invalid Username Format"
+    ] or safe_event.startswith("Session Timeout"):
         send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
 
@@ -647,8 +658,9 @@ def enforce_session_timeout():
     # log timeout, clear session, and force login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
+        timeout_event = get_session_timeout_event_text()
 
-        add_log("Session Timeout", username)
+        add_log(timeout_event, username)
         session.clear()
 
         if request.path.startswith("/api/"):
