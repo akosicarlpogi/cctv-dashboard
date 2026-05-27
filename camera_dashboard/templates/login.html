@@ -76,42 +76,15 @@
     <script>
         function detectDeviceInfo() {
             const ua = navigator.userAgent || "";
-            const uaLower = ua.toLowerCase();
             const platform = navigator.platform || "";
             const maxTouchPoints = navigator.maxTouchPoints || 0;
 
-            let browser = "Unknown Browser";
             let os = "Unknown OS";
             let deviceType = "Unknown Device";
 
             const isIpad =
                 ua.includes("iPad") ||
                 (platform === "MacIntel" && maxTouchPoints > 1);
-
-            const isOpera =
-                ua.includes("OPR/") ||
-                ua.includes("Opera") ||
-                ua.includes("OPiOS") ||
-                ua.includes("OPT/") ||
-                ua.includes("OPRGX") ||
-                uaLower.includes("opera") ||
-                uaLower.includes("opios") ||
-                uaLower.includes("opr/") ||
-                uaLower.includes("opt/") ||
-                uaLower.includes("oprgx");
-
-            const isEdge =
-                ua.includes("EdgiOS") ||
-                ua.includes("EdgA") ||
-                ua.includes("Edg/");
-
-            const isChrome =
-                ua.includes("CriOS") ||
-                ua.includes("Chrome");
-
-            const isFirefox =
-                ua.includes("FxiOS") ||
-                ua.includes("Firefox");
 
             if (isIpad) {
                 os = "iPadOS";
@@ -133,21 +106,7 @@
                 deviceType = "Desktop";
             }
 
-            if (isOpera) {
-                browser = "Opera";
-            } else if (isEdge) {
-                browser = "Microsoft Edge";
-            } else if (isChrome) {
-                browser = "Chrome";
-            } else if (isFirefox) {
-                browser = "Firefox";
-            } else if (isIpad) {
-                browser = "iPadOS Browser";
-            } else if (ua.includes("Safari")) {
-                browser = "Safari";
-            }
-
-            return `${browser} on ${os} (${deviceType})`;
+            return `${os} (${deviceType})`;
         }
 
         function setDeviceInfoField() {

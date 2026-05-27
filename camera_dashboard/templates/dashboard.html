@@ -207,7 +207,7 @@
             white-space: normal;
         }
 
-        .browser-cell {
+        .device-cell {
             white-space: normal;
             overflow-wrap: break-word;
             word-break: normal;
@@ -317,7 +317,7 @@
                                 <th>User</th>
                                 <th>Event</th>
                                 <th>IP Address</th>
-                                <th>Device/Browser</th>
+                                <th>Device</th>
                             </tr>
                         </thead>
 
@@ -332,7 +332,7 @@
                                 <td>{{ log.user }}</td>
                                 <td>{{ log.event }}</td>
                                 <td class="ip-cell">{{ log.ip_address or "N/A" }}</td>
-                                <td class="browser-cell">{{ log.browser_info or "N/A" }}</td>
+                                <td class="device-cell">{{ log.browser_info or "N/A" }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -639,7 +639,7 @@
                     row.appendChild(createTextCell(log.user));
                     row.appendChild(createTextCell(log.event));
                     row.appendChild(createTextCell(log.ip_address, "ip-cell"));
-                    row.appendChild(createTextCell(log.browser_info, "browser-cell"));
+                    row.appendChild(createTextCell(log.browser_info, "device-cell"));
 
                     tableBody.appendChild(row);
                 });

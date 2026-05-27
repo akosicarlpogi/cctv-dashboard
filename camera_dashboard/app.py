@@ -228,12 +228,7 @@ def get_device_info():
         return "Unknown script/tool"
 
     user_agent = parse(user_agent_string)
-
-    browser = user_agent.browser.family or "Unknown Browser"
     operating_system = user_agent.os.family or "Unknown OS"
-
-    if "opr/" in lowered_user_agent or "opera" in lowered_user_agent or "opios" in lowered_user_agent:
-        browser = "Opera"
 
     is_ipad_disguised_as_mac = (
         "macintosh" in lowered_user_agent
@@ -255,7 +250,7 @@ def get_device_info():
     else:
         device_type = "Unknown Device"
 
-    return f"{browser} on {operating_system} ({device_type})"
+    return f"{operating_system} ({device_type})"
 
 
 def get_db_connection():
@@ -277,7 +272,7 @@ def send_discord_alert(event, username, ip_address, device_info, timestamp):
             f"Event: `{safe_event}`\n"
             f"User: `{safe_username}`\n"
             f"IP Address: `{safe_ip}`\n"
-            f"Device/Browser: `{safe_device}`\n"
+            f"Device: `{safe_device}`\n"
             f"Time: `{timestamp}`"
         ),
         "allowed_mentions": {
