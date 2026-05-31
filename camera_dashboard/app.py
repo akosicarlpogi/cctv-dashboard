@@ -303,16 +303,7 @@ def add_log(event, username):
             (timestamp, safe_event, safe_username, ip_address, device_info)
         )
 
-    if safe_event in [
-        "Failed Login Attempt",
-        "Successful Login",
-        "Blocked Login Attempt",
-        "IP Temporarily Blocked",
-        "Username Temporarily Locked",
-        "Invalid Username Format"
-    ] or safe_event.startswith("Session Timeout"):
-        send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
-
+    send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
 # ============================================================
 # DEVICE STATUS HELPERS
