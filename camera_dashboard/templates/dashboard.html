@@ -255,15 +255,17 @@
                         <th>Status</th>
                     </tr>
 
-                    {% for device in devices %}
-                    <tr>
-                        <td>{{ device.name }}</td>
-                        <td>{{ device.ip }}</td>
-                        <td class="{{ 'status-up' if device.online else 'status-down' }}">
-                            {{ device.status }}
-                        </td>
-                    </tr>
-                    {% endfor %}
+                    <tbody id="devicesTableBody">
+                        {% for device in devices %}
+                        <tr>
+                            <td>{{ device.name }}</td>
+                            <td>{{ device.ip }}</td>
+                            <td class="{{ 'status-up' if device.online else 'status-down' }}">
+                                {{ device.status }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
                 </table>
             </div>
 
@@ -332,6 +334,7 @@
     <script>
         let sessionTimeoutTimer = null;
         let logRefreshInterval = null;
+        let deviceRefreshInterval = null;
         let sessionCheckInterval = null;
         let alreadyHandlingExpiredSession = false;
 
@@ -367,6 +370,7 @@
 
             clearTimeout(sessionTimeoutTimer);
             clearInterval(logRefreshInterval);
+            clearInterval(deviceRefreshInterval);
             clearInterval(sessionCheckInterval);
 
             showSessionTimeoutNotice();
@@ -486,6 +490,62 @@
             cell.appendChild(document.createTextNode(timePart));
 
             return cell;
+        }
+
+        async function refreshDeviceStatuses() {
+            if (alreadyHandlingExpiredSession) {
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/devices?t=" + Date.now(), {
+                    method: "GET",
+                    cache: "no-store",
+                    credentials: "same-origin"
+                });
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok) {
+                    console.log("Device status refresh failed:", response.status);
+                    return;
+                }
+
+                const data = await response.json();
+                const devices = data.devices || [];
+                const tableBody = document.getElementById("devicesTableBody");
+
+                if (!tableBody) {
+                    return;
+                }
+
+                tableBody.innerHTML = "";
+
+                devices.forEach(function(device) {
+                    const row = document.createElement("tr");
+
+                    row.appendChild(createTextCell(device.name));
+                    row.appendChild(createTextCell(device.ip, "ip-cell"));
+
+                    const statusCell = document.createElement("td");
+                    statusCell.textContent = device.status;
+
+                    if (device.online) {
+                        statusCell.className = "status-up";
+                    } else {
+                        statusCell.className = "status-down";
+                    }
+
+                    row.appendChild(statusCell);
+                    tableBody.appendChild(row);
+                });
+
+            } catch (error) {
+                console.log("Unable to refresh device statuses:", error);
+            }
         }
 
         async function refreshSystemLogs(forceRefresh = false, jumpToOldest = false) {
@@ -614,6 +674,16 @@
             refreshSystemLogs(true, true);
         }
 
+        function startDevicePolling() {
+            clearInterval(deviceRefreshInterval);
+
+            refreshDeviceStatuses();
+
+            deviceRefreshInterval = setInterval(function () {
+                refreshDeviceStatuses();
+            }, 5000);
+        }
+
         function startLogPolling() {
             clearInterval(logRefreshInterval);
 
@@ -636,24 +706,28 @@
         }
 
         window.addEventListener("load", function () {
+            startDevicePolling();
             startLogPolling();
             startSessionChecking();
         });
 
         window.addEventListener("focus", function () {
             checkSessionStatus();
+            refreshDeviceStatuses();
             refreshSystemLogs(false, false);
         });
 
         document.addEventListener("visibilitychange", function () {
             if (!document.hidden) {
                 checkSessionStatus();
+                refreshDeviceStatuses();
                 refreshSystemLogs(false, false);
             }
         });
 
         window.addEventListener("pageshow", function () {
             checkSessionStatus();
+            refreshDeviceStatuses();
             refreshSystemLogs(false, false);
         });
     </script>

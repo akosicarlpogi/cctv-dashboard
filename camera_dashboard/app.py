@@ -67,6 +67,16 @@ CAMERA_STREAM_URL = os.getenv(
     f"http://{CAMERA_IP}:8080/video"
 ).strip()
 
+camera_base_url = CAMERA_STREAM_URL.rstrip("/")
+
+if camera_base_url.endswith("/video"):
+    camera_base_url = camera_base_url[:-6]
+
+CAMERA_STATUS_URL = os.getenv(
+    "CAMERA_STATUS_URL",
+    f"{camera_base_url}/shot.jpg"
+).strip()
+
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 FAILED_LOGIN_LIMIT = 5
@@ -81,6 +91,7 @@ DEVICES = [
     {
         "name": "IP Camera",
         "address": CAMERA_STREAM_URL,
+        "status_url": CAMERA_STATUS_URL,
     },
 ]
 
@@ -280,6 +291,41 @@ def add_log(event, username):
     send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
 
+def was_recent_timeout_logged(username, ip_address, timeout_event):
+    safe_username = clean_log_value(username, "UNKNOWN", 50)
+    safe_ip = clean_log_value(ip_address, "UNKNOWN_IP", 100)
+    safe_event = clean_log_value(timeout_event, "Session Timeout", 100)
+
+    with get_db_connection() as conn:
+        recent_logs = conn.execute(
+            """
+            SELECT time
+            FROM system_logs
+            WHERE username = %s
+              AND ip_address = %s
+              AND event = %s
+            ORDER BY id DESC
+            LIMIT 5
+            """,
+            (safe_username, safe_ip, safe_event)
+        ).fetchall()
+
+    now_ph = datetime.now(PH_TZ)
+
+    for log in recent_logs:
+        try:
+            logged_time = datetime.strptime(log["time"], "%Y-%m-%d %H:%M:%S")
+            logged_time = logged_time.replace(tzinfo=PH_TZ)
+
+            if (now_ph - logged_time).total_seconds() <= 60:
+                return True
+
+        except (ValueError, TypeError):
+            continue
+
+    return False
+
+
 # ============================================================
 # CAMERA / DEVICE STATUS HELPERS
 # ============================================================
@@ -291,18 +337,26 @@ def get_camera_request_headers():
     }
 
 
-def is_camera_stream_online(stream_url, timeout=5):
-    if not stream_url:
+def is_camera_stream_online(status_url, timeout=5):
+    if not status_url:
         return False
 
     try:
-        with requests.get(
-            stream_url,
+        response = requests.get(
+            status_url,
             headers=get_camera_request_headers(),
-            stream=True,
             timeout=timeout
-        ) as response:
-            return response.status_code < 400
+        )
+
+        content_type = response.headers.get("Content-Type", "").lower()
+
+        if response.status_code >= 400:
+            return False
+
+        if "text/html" in content_type:
+            return False
+
+        return True
 
     except requests.RequestException:
         return False
@@ -312,7 +366,7 @@ def get_device_statuses():
     device_statuses = []
 
     for device in DEVICES:
-        online = is_camera_stream_online(device["address"])
+        online = is_camera_stream_online(device["status_url"])
 
         device_statuses.append({
             "name": device["name"],
@@ -620,8 +674,11 @@ def enforce_session_timeout():
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
         timeout_event = get_session_timeout_event_text()
+        ip_address = get_client_ip()
 
-        add_log(timeout_event, username)
+        if not was_recent_timeout_logged(username, ip_address, timeout_event):
+            add_log(timeout_event, username)
+
         session.clear()
 
         if request.path.startswith("/api/") or request.endpoint == "camera_feed":
@@ -829,6 +886,20 @@ def api_logs():
         "total_count": total_count,
         "has_newer": offset > 0,
         "has_older": offset + limit < total_count
+    })
+
+
+@app.route("/api/devices")
+@limiter.exempt
+def api_devices():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    return jsonify({
+        "devices": get_device_statuses()
     })
 
 
