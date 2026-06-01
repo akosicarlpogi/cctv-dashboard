@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, stream_with_context
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -11,7 +11,6 @@ from flask_wtf.csrf import CSRFProtect, CSRFError
 from user_agents import parse
 import psycopg
 import requests
-import socket
 import re
 import os
 
@@ -19,8 +18,6 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Railway runs your Flask app behind a proxy.
-# ProxyFix helps Flask read the real client IP/protocol correctly.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.secret_key = os.getenv("SECRET_KEY")
@@ -34,17 +31,9 @@ if not DATABASE_URL:
 
 
 # ============================================================
-# SESSION TIMEOUT SETTINGS
+# SESSION SETTINGS
 # ============================================================
-# Main rule:
-# User access expires after exactly 1 hour.
-#
-# Cookie grace:
-# Cookie lasts longer so when an expired user returns,
-# the server can still identify the user and record "Session Timeout".
-#
-# Even though cookie lasts around 3 days after the 1-hour access,
-# actual dashboard access still ends after 60 minutes.
+
 SESSION_TIMEOUT_MINUTES = 60
 SESSION_COOKIE_GRACE_MINUTES = 4320
 
@@ -52,22 +41,14 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "False") == "True",
-
     PERMANENT_SESSION_LIFETIME=timedelta(
         minutes=SESSION_TIMEOUT_MINUTES + SESSION_COOKIE_GRACE_MINUTES
     ),
-
-    # Very important:
-    # /api/logs auto-refresh must NOT extend the session.
     SESSION_REFRESH_EACH_REQUEST=False
 )
 
 csrf = CSRFProtect(app)
 
-# IMPORTANT:
-# Do NOT put global limits here like ["200 per day", "50 per hour"].
-# Real-time logs call /api/logs every 2 seconds, so global limits will break it.
-# We only rate-limit the login POST route below.
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -76,11 +57,15 @@ limiter = Limiter(
 
 
 # ============================================================
-# ENVIRONMENT VARIABLES / SETTINGS
+# ENVIRONMENT SETTINGS
 # ============================================================
 
 CAMERA_IP = os.getenv("CAMERA_IP", "192.168.1.10")
-CAMERA_URL = f"http://{CAMERA_IP}/snapshot.jpg"
+
+CAMERA_STREAM_URL = os.getenv(
+    "CAMERA_STREAM_URL",
+    f"http://{CAMERA_IP}:8080/video"
+).strip()
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -95,8 +80,7 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
 DEVICES = [
     {
         "name": "IP Camera",
-        "ip": os.getenv("CAMERA_IP", "192.168.1.10"),
-        "port": int(os.getenv("CAMERA_PORT", 80)),
+        "address": CAMERA_STREAM_URL,
     },
 ]
 
@@ -295,15 +279,32 @@ def add_log(event, username):
 
     send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
+
 # ============================================================
-# DEVICE STATUS HELPERS
+# CAMERA / DEVICE STATUS HELPERS
 # ============================================================
 
-def is_device_online(ip_address, port, timeout=1):
+def get_camera_request_headers():
+    return {
+        "ngrok-skip-browser-warning": "true",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+
+def is_camera_stream_online(stream_url, timeout=5):
+    if not stream_url:
+        return False
+
     try:
-        with socket.create_connection((ip_address, port), timeout=timeout):
-            return True
-    except OSError:
+        with requests.get(
+            stream_url,
+            headers=get_camera_request_headers(),
+            stream=True,
+            timeout=timeout
+        ) as response:
+            return response.status_code < 400
+
+    except requests.RequestException:
         return False
 
 
@@ -311,11 +312,11 @@ def get_device_statuses():
     device_statuses = []
 
     for device in DEVICES:
-        online = is_device_online(device["ip"], device["port"])
+        online = is_camera_stream_online(device["address"])
 
         device_statuses.append({
             "name": device["name"],
-            "ip": device["ip"],
+            "ip": device["address"],
             "status": "Online" if online else "Offline / Not Detected",
             "online": online
         })
@@ -576,7 +577,7 @@ def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
 
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
@@ -590,8 +591,6 @@ def add_security_headers(response):
         "frame-ancestors 'none';"
     )
 
-    # Prevent browser from showing an old cached dashboard after sleep,
-    # closed browser, back button, or restored tab.
     if request.endpoint != "static":
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -615,13 +614,9 @@ def handle_csrf_error(error):
 
 @app.before_request
 def enforce_session_timeout():
-    # Always ignore static files.
     if request.endpoint == "static":
         return None
 
-    # Important:
-    # Check expired sessions BEFORE allowing /login.
-    # This lets the system log "Session Timeout" even if the user returns directly to login.
     if is_current_session_expired():
         username = session.get("username", "UNKNOWN")
         timeout_event = get_session_timeout_event_text()
@@ -629,29 +624,25 @@ def enforce_session_timeout():
         add_log(timeout_event, username)
         session.clear()
 
-        if request.path.startswith("/api/"):
+        if request.path.startswith("/api/") or request.endpoint == "camera_feed":
             return jsonify({
                 "authenticated": False,
                 "error": "Session expired"
             }), 401
 
-        # If the expired user is already on /login,
-        # allow the login page to load normally after logging the timeout.
         if request.endpoint == "login":
             return None
 
         flash("Your session timed out. Please log in again.")
         return redirect(url_for("login"))
 
-    # Login page is open only AFTER expired-session checking.
     open_endpoints = ["login"]
 
     if request.endpoint in open_endpoints:
         return None
 
-    # If user has no valid session, force login.
     if "user_id" not in session:
-        if request.path.startswith("/api/"):
+        if request.path.startswith("/api/") or request.endpoint == "camera_feed":
             return jsonify({
                 "authenticated": False,
                 "error": "Unauthorized"
@@ -731,7 +722,6 @@ def login():
             ).fetchone()
 
         if user and check_password_hash(user["password_hash"], password):
-            # Clear old session data first.
             session.clear()
             session.permanent = True
 
@@ -739,8 +729,6 @@ def login():
             session["username"] = user["username"]
             session["device_info"] = detected_device_info
 
-            # Fixed absolute expiration.
-            # This does not move even if /api/logs refreshes every 2 seconds.
             session["expires_at"] = (
                 get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
             ).isoformat()
@@ -844,6 +832,51 @@ def api_logs():
     })
 
 
+@app.route("/camera-feed")
+@limiter.exempt
+def camera_feed():
+    if "user_id" not in session:
+        return "Unauthorized", 401
+
+    try:
+        upstream_response = requests.get(
+            CAMERA_STREAM_URL,
+            headers=get_camera_request_headers(),
+            stream=True,
+            timeout=(5, 30)
+        )
+
+        if upstream_response.status_code >= 400:
+            upstream_response.close()
+            return "Camera feed unavailable", 502
+
+        content_type = upstream_response.headers.get(
+            "Content-Type",
+            "multipart/x-mixed-replace"
+        )
+
+        def generate_camera_stream():
+            try:
+                for chunk in upstream_response.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+            finally:
+                upstream_response.close()
+
+        return Response(
+            stream_with_context(generate_camera_stream()),
+            content_type=content_type,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+
+    except requests.RequestException:
+        return "Camera feed unavailable", 502
+
+
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
@@ -861,10 +894,8 @@ def dashboard():
 
     return render_template(
         "dashboard.html",
-        camera_url=CAMERA_URL,
         logs=logs,
         devices=get_device_statuses(),
-        client_ip=get_client_ip(),
         session_seconds_remaining=get_session_seconds_remaining()
     )
 
