@@ -66,8 +66,7 @@
             min-width: 0;
         }
 
-        .feed img,
-        .feed video {
+        .feed img {
             width: 100%;
             height: 48vh;
             min-height: 380px;
@@ -86,9 +85,14 @@
         }
 
         .local-webcam-section video {
-            height: 36vh;
-            min-height: 280px;
-            max-height: 420px;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            min-height: 420px;
+            max-height: 640px;
+            object-fit: cover;
+            background: #111;
+            border: 2px solid #333;
+            border-radius: 4px;
             display: none;
         }
 
@@ -307,6 +311,16 @@
                         </tr>
                         {% endfor %}
                     </tbody>
+
+                    <tbody>
+                        <tr>
+                            <td>Logged-in Device Camera</td>
+                            <td class="ip-cell">Current Browser Device</td>
+                            <td id="browserCameraDeviceStatus" class="status-down">
+                                Offline / Permission Required
+                            </td>
+                        </tr>
+                    </tbody>
                 </table>
             </div>
 
@@ -396,6 +410,17 @@
             }
         }
 
+        function setBrowserCameraDeviceStatus(statusText, isOnline) {
+            const statusCell = document.getElementById("browserCameraDeviceStatus");
+
+            if (!statusCell) {
+                return;
+            }
+
+            statusCell.textContent = statusText;
+            statusCell.className = isOnline ? "status-up" : "status-down";
+        }
+
         async function startLocalWebcam() {
             const video = document.getElementById("userCamera");
             const status = document.getElementById("localCameraStatus");
@@ -403,6 +428,7 @@
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 video.style.display = "none";
                 status.textContent = "Your browser does not support webcam access.";
+                setBrowserCameraDeviceStatus("Unsupported Browser", false);
                 return;
             }
 
@@ -416,18 +442,23 @@
                 video.srcObject = stream;
                 video.style.display = "block";
                 status.textContent = "Your local webcam preview is active. Only you can see this preview.";
+                setBrowserCameraDeviceStatus("Online", true);
 
             } catch (error) {
                 video.style.display = "none";
 
                 if (error.name === "NotAllowedError") {
                     status.textContent = "Webcam permission denied. Click Start Webcam and allow camera access.";
+                    setBrowserCameraDeviceStatus("Permission Denied", false);
                 } else if (error.name === "NotFoundError") {
                     status.textContent = "No webcam device found.";
+                    setBrowserCameraDeviceStatus("No Camera Found", false);
                 } else if (error.name === "NotReadableError") {
                     status.textContent = "Webcam is already being used by another app.";
+                    setBrowserCameraDeviceStatus("Camera In Use", false);
                 } else {
                     status.textContent = "Unable to access your webcam.";
+                    setBrowserCameraDeviceStatus("Offline / Not Detected", false);
                 }
             }
         }
@@ -452,6 +483,8 @@
             if (status) {
                 status.textContent = "Your local webcam preview is stopped.";
             }
+
+            setBrowserCameraDeviceStatus("Offline / Stopped", false);
         }
 
         function showSessionTimeoutNotice() {
