@@ -71,16 +71,42 @@
             min-width: 0;
         }
 
-        .feed img {
+        .camera-feed-wrapper {
+            position: relative;
             width: 100%;
             height: 48vh;
             min-height: 380px;
             max-height: 540px;
-            object-fit: cover;
             background: #111;
             border: 2px solid #333;
             border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .camera-feed-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
             display: block;
+            background: #111;
+        }
+
+        .camera-offline-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background: #6b6b6b;
+            color: white;
+            font-size: 1.1em;
+            padding: 20px;
+        }
+
+        .camera-offline-placeholder span {
+            font-size: 0.9em;
+            opacity: 0.9;
         }
 
         .local-webcam-section {
@@ -265,7 +291,22 @@
         <div class="card feed">
             <h3>Live Camera Feed</h3>
 
-            <img id="cctvFeed" src="{{ camera_stream_url }}" alt="Live CCTV Feed">
+            <div class="camera-feed-wrapper">
+                <img
+                    id="cctvFeed"
+                    src="{{ camera_stream_url }}"
+                    alt="Live CCTV Feed"
+                    onload="handleCameraFeedLoad()"
+                    onerror="handleCameraFeedError()"
+                >
+
+                <div id="cameraOfflinePlaceholder" class="camera-offline-placeholder" style="display: none;">
+                    <div>
+                        <strong>Camera is offline</strong><br>
+                        <span>The live camera feed is currently unavailable.</span>
+                    </div>
+                </div>
+            </div>
 
             <p id="cameraStatus">
                 Live CCTV feed is connected through the configured camera stream.
@@ -408,8 +449,43 @@
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
         const cameraStreamUrl = {{ camera_stream_url|tojson }};
 
+        function handleCameraFeedLoad() {
+            const feed = document.getElementById("cctvFeed");
+            const placeholder = document.getElementById("cameraOfflinePlaceholder");
+
+            if (feed) {
+                feed.style.display = "block";
+            }
+
+            if (placeholder) {
+                placeholder.style.display = "none";
+            }
+        }
+
+        function handleCameraFeedError() {
+            const feed = document.getElementById("cctvFeed");
+            const placeholder = document.getElementById("cameraOfflinePlaceholder");
+
+            if (feed) {
+                feed.style.display = "none";
+            }
+
+            if (placeholder) {
+                placeholder.style.display = "flex";
+            }
+        }
+
         function reloadCameraFeed() {
             const feed = document.getElementById("cctvFeed");
+            const placeholder = document.getElementById("cameraOfflinePlaceholder");
+
+            if (feed) {
+                feed.style.display = "block";
+            }
+
+            if (placeholder) {
+                placeholder.style.display = "none";
+            }
 
             if (feed) {
                 feed.src = "";
@@ -505,9 +581,15 @@
             stopLocalWebcam();
 
             const cctvFeed = document.getElementById("cctvFeed");
+            const placeholder = document.getElementById("cameraOfflinePlaceholder");
 
             if (cctvFeed) {
                 cctvFeed.src = "";
+                cctvFeed.style.display = "none";
+            }
+
+            if (placeholder) {
+                placeholder.style.display = "flex";
             }
         }
 
