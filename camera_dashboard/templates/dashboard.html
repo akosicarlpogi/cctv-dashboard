@@ -117,9 +117,9 @@
 
         .local-webcam-section video {
             width: 100%;
-            aspect-ratio: 4 / 3;
-            min-height: 420px;
-            max-height: 640px;
+            height: 48vh;
+            min-height: 380px;
+            max-height: 540px;
             object-fit: cover;
             background: #111;
             border: 2px solid #333;
@@ -296,20 +296,21 @@
                     id="cctvFeed"
                     src="{{ camera_stream_url }}"
                     alt="Live CCTV Feed"
+                    style="display: none;"
                     onload="handleCameraFeedLoad()"
                     onerror="handleCameraFeedError()"
                 >
 
-                <div id="cameraOfflinePlaceholder" class="camera-offline-placeholder" style="display: none;">
+                <div id="cameraOfflinePlaceholder" class="camera-offline-placeholder">
                     <div>
-                        <strong>Camera is offline</strong><br>
-                        <span>The live camera feed is currently unavailable.</span>
+                        <strong id="cameraPlaceholderTitle">Checking camera feed...</strong><br>
+                        <span id="cameraPlaceholderSubtitle">Please wait while the system connects to the camera.</span>
                     </div>
                 </div>
             </div>
 
             <p id="cameraStatus">
-                Live CCTV feed is connected through the configured camera stream.
+                Checking live CCTV feed status...
             </p>
 
             <button type="button" class="camera-button" onclick="reloadCameraFeed()">
@@ -435,6 +436,9 @@
     <script>
         let activeLocalCameraStream = null;
 
+        let cameraFeedTimeout = null;
+        let cameraFeedLoaded = false;
+
         let sessionTimeoutTimer = null;
         let logRefreshInterval = null;
         let deviceRefreshInterval = null;
@@ -449,22 +453,12 @@
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
         const cameraStreamUrl = {{ camera_stream_url|tojson }};
 
-        function handleCameraFeedLoad() {
+        function showCameraPlaceholder(title, subtitle) {
             const feed = document.getElementById("cctvFeed");
             const placeholder = document.getElementById("cameraOfflinePlaceholder");
-
-            if (feed) {
-                feed.style.display = "block";
-            }
-
-            if (placeholder) {
-                placeholder.style.display = "none";
-            }
-        }
-
-        function handleCameraFeedError() {
-            const feed = document.getElementById("cctvFeed");
-            const placeholder = document.getElementById("cameraOfflinePlaceholder");
+            const placeholderTitle = document.getElementById("cameraPlaceholderTitle");
+            const placeholderSubtitle = document.getElementById("cameraPlaceholderSubtitle");
+            const cameraStatus = document.getElementById("cameraStatus");
 
             if (feed) {
                 feed.style.display = "none";
@@ -473,11 +467,27 @@
             if (placeholder) {
                 placeholder.style.display = "flex";
             }
+
+            if (placeholderTitle) {
+                placeholderTitle.textContent = title;
+            }
+
+            if (placeholderSubtitle) {
+                placeholderSubtitle.textContent = subtitle;
+            }
+
+            if (cameraStatus) {
+                cameraStatus.textContent = "Live CCTV feed is currently offline or unavailable.";
+            }
         }
 
-        function reloadCameraFeed() {
+        function handleCameraFeedLoad() {
             const feed = document.getElementById("cctvFeed");
             const placeholder = document.getElementById("cameraOfflinePlaceholder");
+            const cameraStatus = document.getElementById("cameraStatus");
+
+            cameraFeedLoaded = true;
+            clearTimeout(cameraFeedTimeout);
 
             if (feed) {
                 feed.style.display = "block";
@@ -487,10 +497,51 @@
                 placeholder.style.display = "none";
             }
 
+            if (cameraStatus) {
+                cameraStatus.textContent = "Live CCTV feed is connected through the configured camera stream.";
+            }
+        }
+
+        function handleCameraFeedError() {
+            cameraFeedLoaded = false;
+            clearTimeout(cameraFeedTimeout);
+
+            showCameraPlaceholder(
+                "Camera is offline",
+                "The live camera feed is currently unavailable."
+            );
+        }
+
+        function startCameraFeedTimeout() {
+            clearTimeout(cameraFeedTimeout);
+
+            cameraFeedTimeout = setTimeout(function () {
+                if (!cameraFeedLoaded) {
+                    showCameraPlaceholder(
+                        "Camera is offline",
+                        "The live camera feed is currently unavailable."
+                    );
+                }
+            }, 3000);
+        }
+
+        function reloadCameraFeed() {
+            const feed = document.getElementById("cctvFeed");
+
+            cameraFeedLoaded = false;
+
+            showCameraPlaceholder(
+                "Checking camera feed...",
+                "Please wait while the system connects to the camera."
+            );
+
             if (feed) {
                 feed.src = "";
+
                 setTimeout(function () {
-                    feed.src = cameraStreamUrl + "?t=" + Date.now();
+                    const separator = cameraStreamUrl.includes("?") ? "&" : "?";
+                    feed.src = cameraStreamUrl + separator + "t=" + Date.now();
+                    startCameraFeedTimeout();
                 }, 100);
             }
         }
@@ -573,6 +624,7 @@
         }
 
         function stopDashboardActivity() {
+            clearTimeout(cameraFeedTimeout);
             clearTimeout(sessionTimeoutTimer);
             clearInterval(logRefreshInterval);
             clearInterval(deviceRefreshInterval);
@@ -581,16 +633,16 @@
             stopLocalWebcam();
 
             const cctvFeed = document.getElementById("cctvFeed");
-            const placeholder = document.getElementById("cameraOfflinePlaceholder");
 
             if (cctvFeed) {
                 cctvFeed.src = "";
                 cctvFeed.style.display = "none";
             }
 
-            if (placeholder) {
-                placeholder.style.display = "flex";
-            }
+            showCameraPlaceholder(
+                "Camera is offline",
+                "The live camera feed is currently unavailable."
+            );
         }
 
         function showSessionTimeoutNotice() {
@@ -957,6 +1009,7 @@
         }
 
         window.addEventListener("load", function () {
+            startCameraFeedTimeout();
             startLocalWebcam();
             startDevicePolling();
             startLogPolling();
