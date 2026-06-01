@@ -35,6 +35,11 @@
             background-color: #cc0000;
         }
 
+        .header button:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+        }
+
         .session-notice {
             display: none;
             margin-top: 15px;
@@ -246,9 +251,9 @@
     <div class="header">
         <h2>Network Monitoring Dashboard</h2>
 
-        <form method="POST" action="/logout">
+        <form method="POST" action="/logout" id="logoutForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit">Logout</button>
+            <button type="submit" id="logoutButton">Logout</button>
         </form>
     </div>
 
@@ -260,7 +265,7 @@
         <div class="card feed">
             <h3>Live Camera Feed</h3>
 
-            <img id="cctvFeed" src="/camera-feed" alt="Live CCTV Feed">
+            <img id="cctvFeed" src="{{ camera_stream_url }}" alt="Live CCTV Feed">
 
             <p id="cameraStatus">
                 Live CCTV feed is connected through the configured camera stream.
@@ -401,12 +406,16 @@
         let viewingLatestLogs = true;
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
+        const cameraStreamUrl = {{ camera_stream_url|tojson }};
 
         function reloadCameraFeed() {
             const feed = document.getElementById("cctvFeed");
 
             if (feed) {
-                feed.src = "/camera-feed?t=" + Date.now();
+                feed.src = "";
+                setTimeout(function () {
+                    feed.src = cameraStreamUrl + "?t=" + Date.now();
+                }, 100);
             }
         }
 
@@ -487,6 +496,21 @@
             setBrowserCameraDeviceStatus("Offline / Stopped", false);
         }
 
+        function stopDashboardActivity() {
+            clearTimeout(sessionTimeoutTimer);
+            clearInterval(logRefreshInterval);
+            clearInterval(deviceRefreshInterval);
+            clearInterval(sessionCheckInterval);
+
+            stopLocalWebcam();
+
+            const cctvFeed = document.getElementById("cctvFeed");
+
+            if (cctvFeed) {
+                cctvFeed.src = "";
+            }
+        }
+
         function showSessionTimeoutNotice() {
             const notice = document.getElementById("sessionTimeoutNotice");
 
@@ -502,12 +526,7 @@
 
             alreadyHandlingExpiredSession = true;
 
-            clearTimeout(sessionTimeoutTimer);
-            clearInterval(logRefreshInterval);
-            clearInterval(deviceRefreshInterval);
-            clearInterval(sessionCheckInterval);
-
-            stopLocalWebcam();
+            stopDashboardActivity();
             showSessionTimeoutNotice();
 
             setTimeout(function () {
@@ -816,7 +835,7 @@
 
             deviceRefreshInterval = setInterval(function () {
                 refreshDeviceStatuses();
-            }, 5000);
+            }, 15000);
         }
 
         function startLogPolling() {
@@ -826,7 +845,7 @@
 
             logRefreshInterval = setInterval(function () {
                 refreshSystemLogs(false, false);
-            }, 2000);
+            }, 5000);
         }
 
         function startSessionChecking() {
@@ -837,7 +856,22 @@
 
             sessionCheckInterval = setInterval(function () {
                 checkSessionStatus();
-            }, 10000);
+            }, 30000);
+        }
+
+        const logoutForm = document.getElementById("logoutForm");
+
+        if (logoutForm) {
+            logoutForm.addEventListener("submit", function () {
+                stopDashboardActivity();
+
+                const logoutButton = document.getElementById("logoutButton");
+
+                if (logoutButton) {
+                    logoutButton.disabled = true;
+                    logoutButton.textContent = "Logging out...";
+                }
+            });
         }
 
         window.addEventListener("load", function () {

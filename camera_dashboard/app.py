@@ -11,6 +11,7 @@ from flask_wtf.csrf import CSRFProtect, CSRFError
 from user_agents import parse
 import psycopg
 import requests
+import threading
 import random
 import re
 import os
@@ -261,6 +262,13 @@ def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
+def post_discord_alert_async(message):
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=2)
+    except requests.RequestException:
+        pass
+
+
 def send_discord_alert(event, username, ip_address, device_info, timestamp):
     if not DISCORD_WEBHOOK_URL:
         return
@@ -284,10 +292,11 @@ def send_discord_alert(event, username, ip_address, device_info, timestamp):
         }
     }
 
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
-    except requests.RequestException:
-        pass
+    threading.Thread(
+        target=post_discord_alert_async,
+        args=(message,),
+        daemon=True
+    ).start()
 
 
 def add_log(event, username):
@@ -310,10 +319,10 @@ def add_log(event, username):
     send_discord_alert(safe_event, safe_username, ip_address, device_info, timestamp)
 
 
-def was_recent_timeout_logged(username, ip_address, timeout_event):
+def was_recent_log_logged(username, ip_address, event, seconds=60):
     safe_username = clean_log_value(username, "UNKNOWN", 50)
     safe_ip = clean_log_value(ip_address, "UNKNOWN_IP", 100)
-    safe_event = clean_log_value(timeout_event, "Session Timeout", 100)
+    safe_event = clean_log_value(event, "UNKNOWN_EVENT", 100)
 
     with get_db_connection() as conn:
         recent_logs = conn.execute(
@@ -336,7 +345,7 @@ def was_recent_timeout_logged(username, ip_address, timeout_event):
             logged_time = datetime.strptime(log["time"], "%Y-%m-%d %H:%M:%S")
             logged_time = logged_time.replace(tzinfo=PH_TZ)
 
-            if (now_ph - logged_time).total_seconds() <= 60:
+            if (now_ph - logged_time).total_seconds() <= seconds:
                 return True
 
         except (ValueError, TypeError):
@@ -356,26 +365,25 @@ def get_camera_request_headers():
     }
 
 
-def is_camera_stream_online(status_url, timeout=5):
+def is_camera_stream_online(status_url, timeout=1.5):
     if not status_url:
         return False
 
     try:
-        response = requests.get(
+        with requests.get(
             status_url,
             headers=get_camera_request_headers(),
             timeout=timeout
-        )
+        ) as response:
+            content_type = response.headers.get("Content-Type", "").lower()
 
-        content_type = response.headers.get("Content-Type", "").lower()
+            if response.status_code >= 400:
+                return False
 
-        if response.status_code >= 400:
-            return False
+            if "text/html" in content_type:
+                return False
 
-        if "text/html" in content_type:
-            return False
-
-        return True
+            return True
 
     except requests.RequestException:
         return False
@@ -395,6 +403,20 @@ def get_device_statuses():
         })
 
     return device_statuses
+
+
+def get_initial_device_statuses():
+    initial_devices = []
+
+    for device in DEVICES:
+        initial_devices.append({
+            "name": device["name"],
+            "ip": device["address"],
+            "status": "Checking...",
+            "online": False
+        })
+
+    return initial_devices
 
 
 # ============================================================
@@ -695,7 +717,7 @@ def enforce_session_timeout():
         timeout_event = get_session_timeout_event_text()
         ip_address = get_client_ip()
 
-        if not was_recent_timeout_logged(username, ip_address, timeout_event):
+        if not was_recent_log_logged(username, ip_address, timeout_event, seconds=60):
             add_log(timeout_event, username)
 
         session.clear()
@@ -861,9 +883,11 @@ def login():
 @app.route("/logout", methods=["POST"])
 def logout():
     username = session.get("username", "UNKNOWN")
+    ip_address = get_client_ip()
 
     if "user_id" in session:
-        add_log("Logout", username)
+        if not was_recent_log_logged(username, ip_address, "Logout", seconds=10):
+            add_log("Logout", username)
 
     session.clear()
 
@@ -1011,7 +1035,8 @@ def dashboard():
     return render_template(
         "dashboard.html",
         logs=logs,
-        devices=get_device_statuses(),
+        devices=get_initial_device_statuses(),
+        camera_stream_url=CAMERA_STREAM_URL,
         session_seconds_remaining=get_session_seconds_remaining()
     )
 
