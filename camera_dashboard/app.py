@@ -11,6 +11,7 @@ from flask_wtf.csrf import CSRFProtect, CSRFError
 from user_agents import parse
 import psycopg
 import requests
+import random
 import re
 import os
 
@@ -151,6 +152,24 @@ def get_session_timeout_event_text():
     expired_at_ph = expires_at.astimezone(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     return f"Session Timeout - expired at {expired_at_ph}"
+
+
+# ============================================================
+# CAPTCHA HELPERS
+# ============================================================
+
+def generate_login_captcha():
+    number_one = random.randint(2, 9)
+    number_two = random.randint(2, 9)
+
+    session["login_captcha_answer"] = str(number_one + number_two)
+
+    return f"{number_one} + {number_two}"
+
+
+def render_login_page(status_code=200):
+    captcha_question = generate_login_captcha()
+    return render_template("login.html", captcha_question=captcha_question), status_code
 
 
 # ============================================================
@@ -656,7 +675,7 @@ def add_security_headers(response):
 @app.errorhandler(429)
 def too_many_requests(error):
     flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-    return render_template("login.html"), 429
+    return render_login_page(429)
 
 
 @app.errorhandler(CSRFError)
@@ -728,13 +747,21 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
+        submitted_captcha = request.form.get("captcha_answer", "").strip()
+        expected_captcha = session.get("login_captcha_answer", "")
+
         ip_address = get_client_ip()
         detected_device_info = get_device_info()
+
+        if not expected_captcha or submitted_captcha != expected_captcha:
+            add_log("Failed CAPTCHA Attempt", username or "UNKNOWN")
+            flash("Incorrect security check. Please try again.")
+            return render_login_page()
 
         if is_ip_blocked(ip_address):
             add_log("Blocked Login Attempt", username)
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-            return render_template("login.html"), 429
+            return render_login_page(429)
 
         if not is_valid_username(username):
             add_log("Invalid Username Format", username or "EMPTY")
@@ -744,15 +771,15 @@ def login():
             if block_result["ip_blocked"]:
                 add_log("IP Temporarily Blocked", "invalid_username")
                 flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-                return render_template("login.html"), 429
+                return render_login_page(429)
 
             flash("Invalid credentials. Please try again.")
-            return render_template("login.html")
+            return render_login_page()
 
         if is_username_locked(username):
             add_log("Blocked Login Attempt", username)
             flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
-            return render_template("login.html"), 429
+            return render_login_page(429)
 
         if len(password) < 1 or len(password) > MAX_PASSWORD_LENGTH:
             add_log("Failed Login Attempt", username)
@@ -762,15 +789,15 @@ def login():
             if block_result["ip_blocked"]:
                 add_log("IP Temporarily Blocked", username)
                 flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-                return render_template("login.html"), 429
+                return render_login_page(429)
 
             if block_result["username_locked"]:
                 add_log("Username Temporarily Locked", username)
                 flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
-                return render_template("login.html"), 429
+                return render_login_page(429)
 
             flash("Invalid credentials. Please try again.")
-            return render_template("login.html")
+            return render_login_page()
 
         with get_db_connection() as conn:
             user = conn.execute(
@@ -803,14 +830,14 @@ def login():
         if block_result["ip_blocked"]:
             add_log("IP Temporarily Blocked", username)
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-            return render_template("login.html"), 429
+            return render_login_page(429)
 
         if block_result["username_locked"]:
             add_log("Username Temporarily Locked", username)
             flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
-            return render_template("login.html"), 429
+            return render_login_page(429)
 
-    return render_template("login.html")
+    return render_login_page()
 
 
 @app.route("/logout", methods=["POST"])
