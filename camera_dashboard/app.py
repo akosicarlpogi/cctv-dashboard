@@ -94,16 +94,6 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
 
 DEVICES = [
     {
-        "name": "Router (Gateway)",
-        "ip": os.getenv("ROUTER_IP", "192.168.1.1"),
-        "port": int(os.getenv("ROUTER_PORT", 80)),
-    },
-    {
-        "name": "Network Switch",
-        "ip": os.getenv("SWITCH_IP", "192.168.1.2"),
-        "port": int(os.getenv("SWITCH_PORT", 80)),
-    },
-    {
         "name": "IP Camera",
         "ip": os.getenv("CAMERA_IP", "192.168.1.10"),
         "port": int(os.getenv("CAMERA_PORT", 80)),
