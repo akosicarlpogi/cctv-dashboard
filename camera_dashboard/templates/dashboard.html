@@ -66,7 +66,8 @@
             min-width: 0;
         }
 
-        .feed img {
+        .feed img,
+        .feed video {
             width: 100%;
             height: 48vh;
             min-height: 380px;
@@ -76,6 +77,19 @@
             border: 2px solid #333;
             border-radius: 4px;
             display: block;
+        }
+
+        .local-webcam-section {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+        }
+
+        .local-webcam-section video {
+            height: 36vh;
+            min-height: 280px;
+            max-height: 420px;
+            display: none;
         }
 
         .camera-button {
@@ -93,7 +107,16 @@
             background-color: #0056b3;
         }
 
-        #cameraStatus {
+        .stop-button {
+            background-color: #ff4d4d;
+        }
+
+        .stop-button:hover {
+            background-color: #cc0000;
+        }
+
+        #cameraStatus,
+        #localCameraStatus {
             font-size: 0.95em;
             color: #333;
             margin-top: 10px;
@@ -242,6 +265,24 @@
             <button type="button" class="camera-button" onclick="reloadCameraFeed()">
                 Reload Camera Feed
             </button>
+
+            <div class="local-webcam-section">
+                <h3>Logged-in Device Camera</h3>
+
+                <video id="userCamera" autoplay playsinline muted></video>
+
+                <p id="localCameraStatus">
+                    Starting your local webcam preview...
+                </p>
+
+                <button type="button" class="camera-button" onclick="startLocalWebcam()">
+                    Start Webcam
+                </button>
+
+                <button type="button" class="camera-button stop-button" onclick="stopLocalWebcam()">
+                    Stop Webcam
+                </button>
+            </div>
         </div>
 
         <div>
@@ -332,6 +373,8 @@
     </div>
 
     <script>
+        let activeLocalCameraStream = null;
+
         let sessionTimeoutTimer = null;
         let logRefreshInterval = null;
         let deviceRefreshInterval = null;
@@ -350,6 +393,64 @@
 
             if (feed) {
                 feed.src = "/camera-feed?t=" + Date.now();
+            }
+        }
+
+        async function startLocalWebcam() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("localCameraStatus");
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                video.style.display = "none";
+                status.textContent = "Your browser does not support webcam access.";
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+
+                activeLocalCameraStream = stream;
+                video.srcObject = stream;
+                video.style.display = "block";
+                status.textContent = "Your local webcam preview is active. Only you can see this preview.";
+
+            } catch (error) {
+                video.style.display = "none";
+
+                if (error.name === "NotAllowedError") {
+                    status.textContent = "Webcam permission denied. Click Start Webcam and allow camera access.";
+                } else if (error.name === "NotFoundError") {
+                    status.textContent = "No webcam device found.";
+                } else if (error.name === "NotReadableError") {
+                    status.textContent = "Webcam is already being used by another app.";
+                } else {
+                    status.textContent = "Unable to access your webcam.";
+                }
+            }
+        }
+
+        function stopLocalWebcam() {
+            const video = document.getElementById("userCamera");
+            const status = document.getElementById("localCameraStatus");
+
+            if (activeLocalCameraStream) {
+                activeLocalCameraStream.getTracks().forEach(function(track) {
+                    track.stop();
+                });
+
+                activeLocalCameraStream = null;
+            }
+
+            if (video) {
+                video.srcObject = null;
+                video.style.display = "none";
+            }
+
+            if (status) {
+                status.textContent = "Your local webcam preview is stopped.";
             }
         }
 
@@ -373,6 +474,7 @@
             clearInterval(deviceRefreshInterval);
             clearInterval(sessionCheckInterval);
 
+            stopLocalWebcam();
             showSessionTimeoutNotice();
 
             setTimeout(function () {
@@ -706,6 +808,7 @@
         }
 
         window.addEventListener("load", function () {
+            startLocalWebcam();
             startDevicePolling();
             startLogPolling();
             startSessionChecking();
