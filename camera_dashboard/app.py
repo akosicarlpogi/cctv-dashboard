@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from psycopg.rows import dict_row
@@ -159,18 +160,48 @@ def get_session_timeout_event_text():
 # CAPTCHA HELPERS
 # ============================================================
 
+def get_captcha_serializer():
+    return URLSafeTimedSerializer(app.secret_key, salt="login-captcha")
+
+
 def generate_login_captcha():
     number_one = random.randint(2, 9)
     number_two = random.randint(2, 9)
+    answer = str(number_one + number_two)
 
-    session["login_captcha_answer"] = str(number_one + number_two)
+    captcha_token = get_captcha_serializer().dumps({
+        "answer": answer
+    })
 
-    return f"{number_one} + {number_two}"
+    return f"{number_one} + {number_two}", captcha_token
+
+
+def verify_login_captcha(submitted_answer, captcha_token):
+    if not submitted_answer or not captcha_token:
+        return False
+
+    try:
+        data = get_captcha_serializer().loads(
+            captcha_token,
+            max_age=300
+        )
+
+        expected_answer = str(data.get("answer", "")).strip()
+
+        return submitted_answer.strip() == expected_answer
+
+    except (BadSignature, SignatureExpired):
+        return False
 
 
 def render_login_page(status_code=200):
-    captcha_question = generate_login_captcha()
-    return render_template("login.html", captcha_question=captcha_question), status_code
+    captcha_question, captcha_token = generate_login_captcha()
+
+    return render_template(
+        "login.html",
+        captcha_question=captcha_question,
+        captcha_token=captcha_token
+    ), status_code
 
 
 # ============================================================
@@ -770,7 +801,7 @@ def login():
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         submitted_captcha = request.form.get("captcha_answer", "").strip()
-        expected_captcha = session.get("login_captcha_answer", "")
+        captcha_token = request.form.get("captcha_token", "").strip()
 
         ip_address = get_client_ip()
         detected_device_info = get_device_info()
@@ -780,7 +811,7 @@ def login():
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
             return render_login_page(429)
 
-        if not expected_captcha or submitted_captcha != expected_captcha:
+        if not verify_login_captcha(submitted_captcha, captcha_token):
             add_log("Failed CAPTCHA Attempt", username or "UNKNOWN")
 
             if is_valid_username(username):

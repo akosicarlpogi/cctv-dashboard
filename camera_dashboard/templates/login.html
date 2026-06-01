@@ -80,6 +80,7 @@
 
         <form method="POST" id="loginForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="captcha_token" value="{{ captcha_token }}">
             <input type="hidden" id="client_device_info" name="client_device_info">
 
             <input type="text" name="username" placeholder="Username" required>
