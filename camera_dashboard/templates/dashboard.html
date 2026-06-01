@@ -294,7 +294,6 @@
             <div class="camera-feed-wrapper">
                 <img
                     id="cctvFeed"
-                    src="{{ camera_stream_url }}"
                     alt="Live CCTV Feed"
                     style="display: none;"
                     onload="handleCameraFeedLoad()"
@@ -522,7 +521,7 @@
                         "The live camera feed is currently unavailable."
                     );
                 }
-            }, 3000);
+            }, 8000);
         }
 
         function reloadCameraFeed() {
@@ -536,13 +535,16 @@
             );
 
             if (feed) {
+                feed.onload = handleCameraFeedLoad;
+                feed.onerror = handleCameraFeedError;
+
                 feed.src = "";
 
                 setTimeout(function () {
                     const separator = cameraStreamUrl.includes("?") ? "&" : "?";
                     feed.src = cameraStreamUrl + separator + "t=" + Date.now();
                     startCameraFeedTimeout();
-                }, 100);
+                }, 300);
             }
         }
 
@@ -1009,7 +1011,7 @@
         }
 
         window.addEventListener("load", function () {
-            startCameraFeedTimeout();
+            reloadCameraFeed();
             startLocalWebcam();
             startDevicePolling();
             startLogPolling();
