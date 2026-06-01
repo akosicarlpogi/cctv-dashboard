@@ -753,15 +753,33 @@ def login():
         ip_address = get_client_ip()
         detected_device_info = get_device_info()
 
-        if not expected_captcha or submitted_captcha != expected_captcha:
-            add_log("Failed CAPTCHA Attempt", username or "UNKNOWN")
-            flash("Incorrect security check. Please try again.")
-            return render_login_page()
-
         if is_ip_blocked(ip_address):
-            add_log("Blocked Login Attempt", username)
+            add_log("Blocked Login Attempt", username or "UNKNOWN")
             flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
             return render_login_page(429)
+
+        if not expected_captcha or submitted_captcha != expected_captcha:
+            add_log("Failed CAPTCHA Attempt", username or "UNKNOWN")
+
+            if is_valid_username(username):
+                failed_attempt_username = username
+            else:
+                failed_attempt_username = "invalid_username"
+
+            block_result = record_failed_attempt(failed_attempt_username, ip_address)
+
+            if block_result["ip_blocked"]:
+                add_log("IP Temporarily Blocked", failed_attempt_username)
+                flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
+                return render_login_page(429)
+
+            if block_result["username_locked"]:
+                add_log("Username Temporarily Locked", failed_attempt_username)
+                flash(f"Too many failed login attempts. Try again after {ACCOUNT_LOCK_MINUTES} minutes.")
+                return render_login_page(429)
+
+            flash("Incorrect security check. Please try again.")
+            return render_login_page()
 
         if not is_valid_username(username):
             add_log("Invalid Username Format", username or "EMPTY")
