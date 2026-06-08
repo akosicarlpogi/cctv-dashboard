@@ -451,6 +451,11 @@
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
         const cameraStreamUrl = {{ camera_stream_url|tojson }};
+        const csrfToken = {{ csrf_token()|tojson }};
+
+        let lastActivityHeartbeatAt = 0;
+        let activityHeartbeatInProgress = false;
+        const activityHeartbeatIntervalMs = 60000;
 
         function showCameraPlaceholder(title, subtitle) {
             const feed = document.getElementById("cctvFeed");
@@ -684,6 +689,65 @@
             if (status) {
                 status.textContent = message;
             }
+        }
+
+        async function sendActivityHeartbeat() {
+            if (alreadyHandlingExpiredSession || activityHeartbeatInProgress) {
+                return;
+            }
+
+            const now = Date.now();
+
+            if (now - lastActivityHeartbeatAt < activityHeartbeatIntervalMs) {
+                return;
+            }
+
+            lastActivityHeartbeatAt = now;
+            activityHeartbeatInProgress = true;
+
+            try {
+                const response = await fetch("/api/keep-session-alive?t=" + Date.now(), {
+                    method: "POST",
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    headers: {
+                        "X-CSRFToken": csrfToken
+                    }
+                });
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok) {
+                    console.log("Activity heartbeat failed:", response.status);
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (!data.authenticated || data.seconds_remaining <= 0) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                scheduleSessionTimeout(data.seconds_remaining);
+
+            } catch (error) {
+                console.log("Unable to refresh active session:", error);
+
+            } finally {
+                activityHeartbeatInProgress = false;
+            }
+        }
+
+        function startActivityTracking() {
+            const activityEvents = ["click", "keydown", "mousemove", "scroll", "touchstart"];
+
+            activityEvents.forEach(function(eventName) {
+                document.addEventListener(eventName, sendActivityHeartbeat, { passive: true });
+            });
         }
 
         function scheduleSessionTimeout(secondsRemaining) {
@@ -1013,6 +1077,7 @@
         window.addEventListener("load", function () {
             reloadCameraFeed();
             startLocalWebcam();
+            startActivityTracking();
             startDevicePolling();
             startLogPolling();
             startSessionChecking();

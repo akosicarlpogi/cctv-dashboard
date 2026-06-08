@@ -156,6 +156,13 @@ def get_session_timeout_event_text():
     return f"Session Timeout - expired at {expired_at_ph}"
 
 
+def refresh_current_session_timeout():
+    session["expires_at"] = (
+        get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    ).isoformat()
+    session.modified = True
+
+
 # ============================================================
 # CAPTCHA HELPERS
 # ============================================================
@@ -933,6 +940,23 @@ def api_session_status():
             "authenticated": False,
             "error": "Unauthorized"
         }), 401
+
+    return jsonify({
+        "authenticated": True,
+        "seconds_remaining": get_session_seconds_remaining()
+    })
+
+
+@app.route("/api/keep-session-alive", methods=["POST"])
+@limiter.exempt
+def api_keep_session_alive():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    refresh_current_session_timeout()
 
     return jsonify({
         "authenticated": True,
