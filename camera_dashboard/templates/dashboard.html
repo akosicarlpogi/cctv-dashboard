@@ -451,6 +451,7 @@
 
         const initialSessionSecondsRemaining = {{ session_seconds_remaining|default(3600)|int }};
         const cameraStreamUrl = {{ camera_stream_url|tojson }};
+        let cameraKnownOnline = null;
         const csrfToken = {{ csrf_token()|tojson }};
 
         let lastActivityHeartbeatAt = 0;
@@ -490,6 +491,7 @@
             const placeholder = document.getElementById("cameraOfflinePlaceholder");
             const cameraStatus = document.getElementById("cameraStatus");
 
+            cameraKnownOnline = true;
             cameraFeedLoaded = true;
             clearTimeout(cameraFeedTimeout);
 
@@ -507,6 +509,7 @@
         }
 
         function handleCameraFeedError() {
+            cameraKnownOnline = false;
             cameraFeedLoaded = false;
             clearTimeout(cameraFeedTimeout);
 
@@ -529,7 +532,7 @@
             }, 8000);
         }
 
-        function reloadCameraFeed() {
+        async function reloadCameraFeed(checkStatusFirst = true) {
             const feed = document.getElementById("cctvFeed");
 
             cameraFeedLoaded = false;
@@ -538,6 +541,14 @@
                 "Checking camera feed...",
                 "Please wait while the system connects to the camera."
             );
+
+            if (checkStatusFirst) {
+                await refreshDeviceStatuses();
+
+                if (cameraKnownOnline === false) {
+                    return;
+                }
+            }
 
             if (feed) {
                 feed.onload = handleCameraFeedLoad;
@@ -550,6 +561,35 @@
                     feed.src = cameraStreamUrl + separator + "t=" + Date.now();
                     startCameraFeedTimeout();
                 }, 300);
+            }
+        }
+
+        function updateCctvFeedFromDeviceStatus(isOnline) {
+            const feed = document.getElementById("cctvFeed");
+
+            if (!isOnline) {
+                cameraKnownOnline = false;
+                cameraFeedLoaded = false;
+                clearTimeout(cameraFeedTimeout);
+
+                if (feed) {
+                    feed.src = "";
+                    feed.style.display = "none";
+                }
+
+                showCameraPlaceholder(
+                    "Camera is offline",
+                    "The live camera feed is currently unavailable."
+                );
+
+                return;
+            }
+
+            const wasOffline = cameraKnownOnline === false;
+            cameraKnownOnline = true;
+
+            if (wasOffline) {
+                reloadCameraFeed(false);
             }
         }
 
@@ -895,6 +935,10 @@
 
                     row.appendChild(statusCell);
                     tableBody.appendChild(row);
+
+                    if (device.name === "IP Camera") {
+                        updateCctvFeedFromDeviceStatus(Boolean(device.online));
+                    }
                 });
 
             } catch (error) {

@@ -16,6 +16,7 @@ import threading
 import random
 import re
 import os
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 load_dotenv()
 
@@ -399,8 +400,24 @@ def was_recent_log_logged(username, ip_address, event, seconds=60):
 def get_camera_request_headers():
     return {
         "ngrok-skip-browser-warning": "true",
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     }
+
+
+def add_cache_buster(url):
+    parts = urlsplit(url)
+    query_items = parse_qsl(parts.query, keep_blank_values=True)
+    query_items.append(("t", str(int(get_utc_now().timestamp() * 1000))))
+
+    return urlunsplit((
+        parts.scheme,
+        parts.netloc,
+        parts.path,
+        urlencode(query_items),
+        parts.fragment
+    ))
 
 
 def is_camera_stream_online(status_url, timeout=1.5):
@@ -408,8 +425,10 @@ def is_camera_stream_online(status_url, timeout=1.5):
         return False
 
     try:
+        status_request_url = add_cache_buster(status_url)
+
         with requests.get(
-            status_url,
+            status_request_url,
             headers=get_camera_request_headers(),
             timeout=timeout
         ) as response:
