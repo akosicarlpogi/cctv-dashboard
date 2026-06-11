@@ -875,7 +875,7 @@ def enforce_session_timeout():
     if not is_logged_in_password_version_current():
         username = session.get("username", "UNKNOWN")
         ip_address = get_client_ip()
-        event = "Forced Logout - Password Changed"
+        event = "Forced Logout"
 
         if not was_recent_log_logged(username, ip_address, event, seconds=30):
             add_log(event, username)
