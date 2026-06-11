@@ -317,7 +317,7 @@
             </button>
 
             <div class="local-webcam-section">
-                <h3>Logged-in Device Camera</h3>
+                <h3>Current Logged-in Device Camera</h3>
 
                 <video id="userCamera" autoplay playsinline muted></video>
 
@@ -360,14 +360,19 @@
 
                     <tbody>
                         <tr>
-                            <td>Logged-in Device Camera</td>
-                            <td class="ip-cell">Current Browser Device</td>
+                            <td>Current Logged-in Device (Only You)</td>
+                            <td class="ip-cell">This browser only</td>
                             <td id="browserCameraDeviceStatus" class="status-down">
                                 Offline / Permission Required
                             </td>
                         </tr>
                     </tbody>
                 </table>
+
+                <p class="device-privacy-note">
+                    Note: the current logged-in device is detected only from your own browser.
+                    Other users see their own current browser device, not yours.
+                </p>
             </div>
 
             <div class="card">
@@ -936,7 +941,7 @@
                     row.appendChild(statusCell);
                     tableBody.appendChild(row);
 
-                    if (device.name === "IP Camera") {
+                    if (device.device_type === "cctv_camera" || device.name === "CCTV Camera") {
                         updateCctvFeedFromDeviceStatus(Boolean(device.online));
                     }
                 });

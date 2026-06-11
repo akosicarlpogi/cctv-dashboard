@@ -93,8 +93,10 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9_]{3,30}$")
 
 DEVICES = [
     {
-        "name": "IP Camera",
+        "name": "CCTV Camera",
+        "device_type": "cctv_camera",
         "address": CAMERA_STREAM_URL,
+        "display_address": "Hidden for security",
         "status_url": CAMERA_STATUS_URL,
     },
 ]
@@ -454,7 +456,8 @@ def get_device_statuses():
 
         device_statuses.append({
             "name": device["name"],
-            "ip": device["address"],
+            "device_type": device.get("device_type", "device"),
+            "ip": device.get("display_address", "Hidden for security"),
             "status": "Online" if online else "Offline / Not Detected",
             "online": online
         })
@@ -468,7 +471,8 @@ def get_initial_device_statuses():
     for device in DEVICES:
         initial_devices.append({
             "name": device["name"],
-            "ip": device["address"],
+            "device_type": device.get("device_type", "device"),
+            "ip": device.get("display_address", "Hidden for security"),
             "status": "Checking...",
             "online": False
         })
