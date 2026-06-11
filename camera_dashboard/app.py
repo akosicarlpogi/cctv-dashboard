@@ -159,6 +159,15 @@ def get_session_timeout_event_text():
     return f"Session Timeout - expired at {expired_at_ph}"
 
 
+def log_current_session_timeout_once():
+    username = session.get("username", "UNKNOWN")
+    timeout_event = get_session_timeout_event_text()
+    ip_address = get_client_ip()
+
+    if not was_recent_log_logged(username, ip_address, timeout_event, seconds=60):
+        add_log(timeout_event, username)
+
+
 def refresh_current_session_timeout():
     session["expires_at"] = (
         get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
@@ -704,6 +713,7 @@ def initialize_database():
             ("rafael", os.getenv("RAFAEL_PASSWORD")),
             ("steven", os.getenv("STEVEN_PASSWORD")),
             ("patrick", os.getenv("PATRICK_PASSWORD")),
+            ("sirnetad", os.getenv("SIRNETAD_PASSWORD")),
         ]
 
         for username, password in default_users:
@@ -773,14 +783,13 @@ def enforce_session_timeout():
     if request.endpoint == "static":
         return None
 
+    # This endpoint manually checks the idle timer so the dashboard can
+    # record an idle timeout before redirecting the user to the login page.
+    if request.endpoint == "api_expire_idle_session":
+        return None
+
     if is_current_session_expired():
-        username = session.get("username", "UNKNOWN")
-        timeout_event = get_session_timeout_event_text()
-        ip_address = get_client_ip()
-
-        if not was_recent_log_logged(username, ip_address, timeout_event, seconds=60):
-            add_log(timeout_event, username)
-
+        log_current_session_timeout_once()
         session.clear()
 
         if request.path.startswith("/api/") or request.endpoint == "camera_feed":
@@ -968,6 +977,34 @@ def api_session_status():
         "authenticated": True,
         "seconds_remaining": get_session_seconds_remaining()
     })
+
+
+@app.route("/api/expire-idle-session", methods=["POST"])
+@limiter.exempt
+def api_expire_idle_session():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    seconds_remaining = get_session_seconds_remaining()
+
+    if seconds_remaining > 0:
+        return jsonify({
+            "authenticated": True,
+            "expired": False,
+            "seconds_remaining": seconds_remaining
+        })
+
+    log_current_session_timeout_once()
+    session.clear()
+
+    return jsonify({
+        "authenticated": False,
+        "expired": True,
+        "error": "Session expired"
+    }), 401
 
 
 @app.route("/api/keep-session-alive", methods=["POST"])
