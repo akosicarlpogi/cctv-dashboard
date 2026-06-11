@@ -577,6 +577,56 @@ def is_carlson_admin():
     return session.get("username") == "carlson"
 
 
+def normalize_username_value(username):
+    safe_username = clean_log_value(username, "", 50).lower()
+
+    if not safe_username or not is_valid_username(safe_username):
+        return None
+
+    return safe_username
+
+
+def is_user_manually_blocked(username):
+    safe_username = normalize_username_value(username)
+
+    if not safe_username:
+        return False
+
+    now = get_utc_now()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_users WHERE blocked_until <= %s",
+            (now,)
+        )
+
+        blocked_user = conn.execute(
+            """
+            SELECT blocked_until
+            FROM blocked_users
+            WHERE username = %s AND blocked_until > %s
+            """,
+            (safe_username, now)
+        ).fetchone()
+
+    return blocked_user is not None
+
+
+def user_exists(username):
+    safe_username = normalize_username_value(username)
+
+    if not safe_username:
+        return False
+
+    with get_db_connection() as conn:
+        user = conn.execute(
+            "SELECT id FROM users WHERE username = %s",
+            (safe_username,)
+        ).fetchone()
+
+    return user is not None
+
+
 def format_blocked_until(blocked_until):
     if not blocked_until:
         return "N/A"
@@ -780,6 +830,14 @@ def initialize_database():
         """)
 
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                username VARCHAR(50) PRIMARY KEY,
+                blocked_until TIMESTAMPTZ NOT NULL,
+                reason TEXT
+            );
+        """)
+
+        conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_failed_login_attempts_ip_time
             ON failed_login_attempts (ip_address, attempted_at);
         """)
@@ -915,10 +973,29 @@ def enforce_session_timeout():
         if request.path.startswith("/api/") or request.endpoint == "camera_feed":
             return jsonify({
                 "authenticated": False,
-                "error": "Your IP address is blocked."
+                "error": "Unauthorized"
             }), 401
 
-        flash("Your IP address is blocked. Please contact the administrator.")
+        flash("Invalid credentials. Please try again.")
+        return redirect(url_for("login"))
+
+    if is_user_manually_blocked(session.get("username")):
+        username = session.get("username", "UNKNOWN")
+        ip_address = get_client_ip()
+        event = "Forced Logout"
+
+        if not was_recent_log_logged(username, ip_address, event, seconds=30):
+            add_log(event, username)
+
+        session.clear()
+
+        if request.path.startswith("/api/") or request.endpoint == "camera_feed":
+            return jsonify({
+                "authenticated": False,
+                "error": "Unauthorized"
+            }), 401
+
+        flash("Invalid credentials. Please try again.")
         return redirect(url_for("login"))
 
     if not is_logged_in_password_version_current():
@@ -1005,6 +1082,11 @@ def login():
                 flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
                 return render_login_page(429)
 
+            flash("Invalid credentials. Please try again.")
+            return render_login_page()
+
+        if is_user_manually_blocked(username):
+            add_log("Blocked Login Attempt", username)
             flash("Invalid credentials. Please try again.")
             return render_login_page()
 
@@ -1313,7 +1395,6 @@ def api_block_ip():
             (ip_address, blocked_until, reason)
         )
 
-    add_log(f"Manual IP Blocked: {ip_address}", session.get("username", "carlson"))
 
     return jsonify({
         "success": True,
@@ -1352,11 +1433,161 @@ def api_unblock_ip():
             (ip_address,)
         )
 
-    add_log(f"Manual IP Unblocked: {ip_address}", session.get("username", "carlson"))
 
     return jsonify({
         "success": True,
         "ip_address": ip_address
+    })
+
+
+@app.route("/api/blocked-users")
+@limiter.exempt
+def api_blocked_users():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    now = get_utc_now()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_users WHERE blocked_until <= %s",
+            (now,)
+        )
+
+        blocked_users = conn.execute(
+            """
+            SELECT username, blocked_until, reason
+            FROM blocked_users
+            WHERE blocked_until > %s
+            ORDER BY blocked_until DESC
+            LIMIT 25
+            """,
+            (now,)
+        ).fetchall()
+
+    return jsonify({
+        "blocked_users": [
+            {
+                "username": row["username"],
+                "blocked_until": format_blocked_until(row["blocked_until"]),
+                "reason": row.get("reason") or "Manual user block"
+            }
+            for row in blocked_users
+        ]
+    })
+
+
+@app.route("/api/block-user", methods=["POST"])
+@limiter.exempt
+def api_block_user():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    data = request.get_json(silent=True) or {}
+    username = normalize_username_value(data.get("username", ""))
+
+    if not username:
+        return jsonify({
+            "success": False,
+            "error": "Enter a valid username."
+        }), 400
+
+    if username == "carlson":
+        return jsonify({
+            "success": False,
+            "error": "You cannot block carlson from this panel."
+        }), 400
+
+    if not user_exists(username):
+        return jsonify({
+            "success": False,
+            "error": "Username does not exist in the system."
+        }), 404
+
+    try:
+        duration_minutes = int(data.get("duration_minutes", 60))
+    except (TypeError, ValueError):
+        duration_minutes = 60
+
+    duration_minutes = max(1, min(duration_minutes, 10080))
+    blocked_until = get_utc_now() + timedelta(minutes=duration_minutes)
+    reason = clean_log_value(
+        data.get("reason") or f"Manual user block by {session.get('username', 'carlson')}",
+        "Manual user block",
+        150
+    )
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO blocked_users (username, blocked_until, reason)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (username)
+            DO UPDATE SET
+                blocked_until = EXCLUDED.blocked_until,
+                reason = EXCLUDED.reason
+            """,
+            (username, blocked_until, reason)
+        )
+
+    return jsonify({
+        "success": True,
+        "username": username,
+        "blocked_until": format_blocked_until(blocked_until)
+    })
+
+
+@app.route("/api/unblock-user", methods=["POST"])
+@limiter.exempt
+def api_unblock_user():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    data = request.get_json(silent=True) or {}
+    username = normalize_username_value(data.get("username", ""))
+
+    if not username:
+        return jsonify({
+            "success": False,
+            "error": "Enter a valid username."
+        }), 400
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_users WHERE username = %s",
+            (username,)
+        )
+
+    return jsonify({
+        "success": True,
+        "username": username
     })
 
 

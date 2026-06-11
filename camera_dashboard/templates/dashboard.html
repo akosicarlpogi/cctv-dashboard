@@ -69,6 +69,7 @@
             border-radius: 8px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             min-width: 0;
+            margin-bottom: 20px;
         }
 
         .camera-feed-wrapper {
@@ -110,9 +111,9 @@
         }
 
         .local-webcam-section {
-            margin-top: 30px;
+            margin-top: 0;
             padding-top: 20px;
-            border-top: 1px solid #ddd;
+            border-top: none;
         }
 
         .local-webcam-section video {
@@ -172,13 +173,13 @@
             line-height: 1.25;
         }
 
-        .admin-ip-panel {
-            margin-top: 25px;
-            padding-top: 18px;
-            border-top: 1px solid #ddd;
+        .admin-ip-panel,
+        .admin-user-panel {
+            margin-bottom: 20px;
         }
 
-        .admin-ip-panel h3 {
+        .admin-ip-panel h3,
+        .admin-user-panel h3 {
             margin-bottom: 8px;
         }
 
@@ -204,7 +205,8 @@
             font-weight: bold;
         }
 
-        .ip-block-row {
+        .ip-block-row,
+        .user-block-row {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
@@ -212,28 +214,33 @@
             margin-top: 10px;
         }
 
-        .ip-block-row input {
+        .ip-block-row input,
+        .user-block-row input {
             padding: 9px;
             border: 1px solid #ccc;
             border-radius: 4px;
             font-size: 0.9em;
         }
 
-        .ip-block-row input[type="text"] {
+        .ip-block-row input[type="text"],
+        .user-block-row input[type="text"] {
             flex: 1 1 190px;
         }
 
-        .ip-block-row input[type="number"] {
+        .ip-block-row input[type="number"],
+        .user-block-row input[type="number"] {
             width: 105px;
         }
 
-        .blocked-ip-list {
+        .blocked-ip-list,
+        .blocked-user-list {
             margin-top: 10px;
             font-size: 0.85em;
             color: #555;
         }
 
-        .blocked-ip-item {
+        .blocked-ip-item,
+        .blocked-user-item {
             display: flex;
             justify-content: space-between;
             gap: 8px;
@@ -380,98 +387,9 @@
     </div>
 
     <div class="grid">
-        <div class="card feed">
-            <h3>Live Camera Feed</h3>
-
-            <div class="camera-feed-wrapper">
-                <img
-                    id="cctvFeed"
-                    alt="Live CCTV Feed"
-                    style="display: none;"
-                    onload="handleCameraFeedLoad()"
-                    onerror="handleCameraFeedError()"
-                >
-
-                <div id="cameraOfflinePlaceholder" class="camera-offline-placeholder">
-                    <div>
-                        <strong id="cameraPlaceholderTitle">Checking camera feed...</strong><br>
-                        <span id="cameraPlaceholderSubtitle">Please wait while the system connects to the camera.</span>
-                    </div>
-                </div>
-            </div>
-
-            <p id="cameraStatus">
-                Checking live CCTV feed status...
-            </p>
-
-            <button type="button" class="camera-button" onclick="reloadCameraFeed()">
-                Reload Camera Feed
-            </button>
-
-            <div class="local-webcam-section">
-                <h3>Logged-in Device (Only You)</h3>
-
-                <video id="userCamera" autoplay playsinline muted></video>
-
-                <p id="localCameraStatus">
-                    Starting your local webcam preview...
-                </p>
-
-                <button type="button" class="camera-button" onclick="startLocalWebcam()">
-                    Start Webcam
-                </button>
-
-                <button type="button" class="camera-button stop-button" onclick="stopLocalWebcam()">
-                    Stop Webcam
-                </button>
-            </div>
-
-            {% if is_carlson_admin %}
-            <div class="admin-ip-panel">
-                <h3>IP Blocking Controls</h3>
-
-                <p class="admin-note">
-                    Admin-only panel. Visible only to carlson. Blocking an IP will prevent that IP from logging in and will force out any active session using that IP on its next request.
-                </p>
-
-                <div class="ip-block-row">
-                    <input
-                        type="text"
-                        id="blockIpInput"
-                        placeholder="Enter IP address from logs"
-                        autocomplete="off"
-                    >
-
-                    <input
-                        type="number"
-                        id="blockMinutesInput"
-                        min="1"
-                        max="10080"
-                        value="60"
-                        title="Block duration in minutes"
-                    >
-
-                    <button type="button" class="camera-button" onclick="blockIpAddress()">
-                        Block IP
-                    </button>
-
-                    <button type="button" class="camera-button stop-button" onclick="unblockIpAddress()">
-                        Unblock IP
-                    </button>
-                </div>
-
-                <div id="ipBlockMessage" class="admin-message"></div>
-
-                <div class="blocked-ip-list">
-                    <strong>Currently blocked IPs</strong>
-                    <div id="blockedIpList">Loading blocked IPs...</div>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-
         <div>
-            <div class="card" style="margin-bottom: 20px;">
+            {% if is_carlson_admin %}
+            <div class="card">
                 <h3>Connected Devices</h3>
 
                 <table class="device-table">
@@ -508,6 +426,178 @@
                     Note: this logged-in device is visible only to your own browser. Other users see their own device.
                 </p>
             </div>
+            {% endif %}
+
+            <div class="card feed">
+                <h3>Live Camera Feed</h3>
+
+                <div class="camera-feed-wrapper">
+                    <img
+                        id="cctvFeed"
+                        alt="Live CCTV Feed"
+                        style="display: none;"
+                        onload="handleCameraFeedLoad()"
+                        onerror="handleCameraFeedError()"
+                    >
+
+                    <div id="cameraOfflinePlaceholder" class="camera-offline-placeholder">
+                        <div>
+                            <strong id="cameraPlaceholderTitle">Checking camera feed...</strong><br>
+                            <span id="cameraPlaceholderSubtitle">Please wait while the system connects to the camera.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <p id="cameraStatus">
+                    Checking live CCTV feed status...
+                </p>
+
+                <button type="button" class="camera-button" onclick="reloadCameraFeed()">
+                    Reload Camera Feed
+                </button>
+            </div>
+
+            <div class="card local-webcam-section">
+                <h3>Logged-in Device (Only You)</h3>
+
+                <video id="userCamera" autoplay playsinline muted></video>
+
+                <p id="localCameraStatus">
+                    Starting your local webcam preview...
+                </p>
+
+                <button type="button" class="camera-button" onclick="startLocalWebcam()">
+                    Start Webcam
+                </button>
+
+                <button type="button" class="camera-button stop-button" onclick="stopLocalWebcam()">
+                    Stop Webcam
+                </button>
+            </div>
+        </div>
+
+        <div>
+            {% if is_carlson_admin %}
+            <div class="card admin-ip-panel">
+                <h3>IP Blocking Controls</h3>
+
+                <p class="admin-note">
+                    Admin-only panel. Blocking an IP prevents that IP from logging in and forces out active sessions using that IP on their next request.
+                </p>
+
+                <div class="ip-block-row">
+                    <input
+                        type="text"
+                        id="blockIpInput"
+                        placeholder="Enter IP address from logs"
+                        autocomplete="off"
+                    >
+
+                    <input
+                        type="number"
+                        id="blockMinutesInput"
+                        min="1"
+                        max="10080"
+                        value="60"
+                        title="Block duration in minutes"
+                    >
+
+                    <button type="button" class="camera-button" onclick="blockIpAddress()">
+                        Block IP
+                    </button>
+
+                    <button type="button" class="camera-button stop-button" onclick="unblockIpAddress()">
+                        Unblock IP
+                    </button>
+                </div>
+
+                <div id="ipBlockMessage" class="admin-message"></div>
+
+                <div class="blocked-ip-list">
+                    <strong>Currently blocked IPs</strong>
+                    <div id="blockedIpList">Loading blocked IPs...</div>
+                </div>
+            </div>
+
+            <div class="card admin-user-panel">
+                <h3>User Blocking Controls</h3>
+
+                <p class="admin-note">
+                    Admin-only panel. Blocking a username prevents that user from logging in and forces out their active session on the next request.
+                </p>
+
+                <div class="user-block-row">
+                    <input
+                        type="text"
+                        id="blockUserInput"
+                        placeholder="Enter username"
+                        autocomplete="off"
+                    >
+
+                    <input
+                        type="number"
+                        id="blockUserMinutesInput"
+                        min="1"
+                        max="10080"
+                        value="60"
+                        title="Block duration in minutes"
+                    >
+
+                    <button type="button" class="camera-button" onclick="blockUsername()">
+                        Block User
+                    </button>
+
+                    <button type="button" class="camera-button stop-button" onclick="unblockUsername()">
+                        Unblock User
+                    </button>
+                </div>
+
+                <div id="userBlockMessage" class="admin-message"></div>
+
+                <div class="blocked-user-list">
+                    <strong>Currently blocked users</strong>
+                    <div id="blockedUserList">Loading blocked users...</div>
+                </div>
+            </div>
+            {% else %}
+            <div class="card">
+                <h3>Connected Devices</h3>
+
+                <table class="device-table">
+                    <tr>
+                        <th>Device</th>
+                        <th>Address</th>
+                        <th>Status</th>
+                    </tr>
+
+                    <tbody id="devicesTableBody">
+                        {% for device in devices %}
+                        <tr>
+                            <td>{{ device.name }}</td>
+                            <td>{{ device.ip }}</td>
+                            <td class="{{ 'status-up' if device.online else 'status-down' }}">
+                                {{ device.status }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+
+                    <tbody>
+                        <tr>
+                            <td>Logged-in Device (Only You)</td>
+                            <td class="ip-cell">This browser only</td>
+                            <td id="browserCameraDeviceStatus" class="status-down">
+                                Offline / Permission Required
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p class="device-privacy-note">
+                    Note: this logged-in device is visible only to your own browser. Other users see their own device.
+                </p>
+            </div>
+            {% endif %}
 
             <div class="card">
                 <h3>System Logs</h3>
@@ -1144,6 +1234,172 @@
             }
         }
 
+        function setUserBlockMessage(message, type = "") {
+            const messageBox = document.getElementById("userBlockMessage");
+
+            if (!messageBox) {
+                return;
+            }
+
+            messageBox.textContent = message;
+            messageBox.className = "admin-message" + (type ? " " + type : "");
+        }
+
+        function getUserBlockInputValue() {
+            const usernameInput = document.getElementById("blockUserInput");
+            return usernameInput ? usernameInput.value.trim().toLowerCase() : "";
+        }
+
+        async function refreshBlockedUsers() {
+            if (!isCarlsonAdmin || alreadyHandlingExpiredSession) {
+                return;
+            }
+
+            const list = document.getElementById("blockedUserList");
+
+            if (!list) {
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/blocked-users?t=" + Date.now(), {
+                    method: "GET",
+                    cache: "no-store",
+                    credentials: "same-origin"
+                });
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok) {
+                    list.textContent = "Unable to load blocked users.";
+                    return;
+                }
+
+                const data = await response.json();
+                const blockedUsers = data.blocked_users || [];
+
+                list.innerHTML = "";
+
+                if (blockedUsers.length === 0) {
+                    list.textContent = "No manually blocked users.";
+                    return;
+                }
+
+                blockedUsers.forEach(function(item) {
+                    const row = document.createElement("div");
+                    row.className = "blocked-user-item";
+
+                    const text = document.createElement("span");
+                    text.textContent = item.username + " — until " + item.blocked_until;
+
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "small-danger-button";
+                    button.textContent = "Unblock";
+                    button.onclick = function () {
+                        unblockUsername(item.username);
+                    };
+
+                    row.appendChild(text);
+                    row.appendChild(button);
+                    list.appendChild(row);
+                });
+
+            } catch (error) {
+                list.textContent = "Unable to load blocked users.";
+            }
+        }
+
+        async function blockUsername() {
+            const username = getUserBlockInputValue();
+            const minutesInput = document.getElementById("blockUserMinutesInput");
+            const durationMinutes = minutesInput ? Number(minutesInput.value || 60) : 60;
+
+            if (!username) {
+                setUserBlockMessage("Enter a username first.", "error");
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/block-user", {
+                    method: "POST",
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        duration_minutes: durationMinutes
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok || !data.success) {
+                    setUserBlockMessage(data.error || "Unable to block user.", "error");
+                    return;
+                }
+
+                setUserBlockMessage("Blocked " + data.username + " until " + data.blocked_until + ".", "success");
+                refreshBlockedUsers();
+
+            } catch (error) {
+                setUserBlockMessage("Unable to block user. Check connection.", "error");
+            }
+        }
+
+        async function unblockUsername(usernameOverride = null) {
+            const username = usernameOverride || getUserBlockInputValue();
+
+            if (!username) {
+                setUserBlockMessage("Enter a username first.", "error");
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/unblock-user", {
+                    method: "POST",
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken
+                    },
+                    body: JSON.stringify({
+                        username: username
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok || !data.success) {
+                    setUserBlockMessage(data.error || "Unable to unblock user.", "error");
+                    return;
+                }
+
+                setUserBlockMessage("Unblocked " + data.username + ".", "success");
+                refreshBlockedUsers();
+
+            } catch (error) {
+                setUserBlockMessage("Unable to unblock user. Check connection.", "error");
+            }
+        }
+
         async function checkSessionStatus() {
             if (alreadyHandlingExpiredSession) {
                 return;
@@ -1446,6 +1702,7 @@
             startLogPolling();
             startSessionChecking();
             refreshBlockedIps();
+            refreshBlockedUsers();
         });
 
         window.addEventListener("focus", function () {
@@ -1453,6 +1710,7 @@
             refreshDeviceStatuses();
             refreshSystemLogs(false, false);
             refreshBlockedIps();
+            refreshBlockedUsers();
         });
 
         document.addEventListener("visibilitychange", function () {
@@ -1460,6 +1718,7 @@
                 checkSessionStatus();
                 refreshDeviceStatuses();
                 refreshSystemLogs(false, false);
+                refreshBlockedUsers();
             }
         });
 
@@ -1467,6 +1726,7 @@
             checkSessionStatus();
             refreshDeviceStatuses();
             refreshSystemLogs(false, false);
+            refreshBlockedUsers();
         });
     </script>
 
