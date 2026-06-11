@@ -687,7 +687,7 @@
 
         let lastActivityHeartbeatAt = 0;
         let activityHeartbeatInProgress = false;
-        const activityHeartbeatIntervalMs = 60000;
+        const activityHeartbeatIntervalMs = 10000;
 
         function showCameraPlaceholder(title, subtitle) {
             const feed = document.getElementById("cctvFeed");
@@ -1048,10 +1048,16 @@
         }
 
         function startActivityTracking() {
-            const activityEvents = ["click", "keydown", "mousemove", "scroll", "touchstart"];
+            const activityEvents = ["click", "keydown", "mousemove", "wheel", "touchstart", "pointerdown"];
 
             activityEvents.forEach(function(eventName) {
-                document.addEventListener(eventName, sendActivityHeartbeat, { passive: true });
+                document.addEventListener(eventName, sendActivityHeartbeat, { passive: true, capture: true });
+            });
+
+            window.addEventListener("scroll", sendActivityHeartbeat, { passive: true, capture: true });
+
+            document.querySelectorAll(".log-scroll-box").forEach(function(scrollBox) {
+                scrollBox.addEventListener("scroll", sendActivityHeartbeat, { passive: true });
             });
         }
 

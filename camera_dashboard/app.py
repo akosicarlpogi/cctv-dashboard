@@ -51,7 +51,8 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(
         minutes=SESSION_TIMEOUT_MINUTES + SESSION_COOKIE_GRACE_MINUTES
     ),
-    SESSION_REFRESH_EACH_REQUEST=False
+    SESSION_REFRESH_EACH_REQUEST=False,
+    WTF_CSRF_TIME_LIMIT=None
 )
 
 csrf = CSRFProtect(app)
