@@ -16,6 +16,8 @@ import threading
 import random
 import re
 import os
+import hmac
+import hashlib
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 load_dotenv()
@@ -173,6 +175,50 @@ def refresh_current_session_timeout():
         get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
     ).isoformat()
     session.modified = True
+
+
+def get_password_version(password):
+    if not password:
+        return None
+
+    secret = app.secret_key.encode("utf-8")
+    password_bytes = password.encode("utf-8")
+
+    return hmac.new(secret, password_bytes, hashlib.sha256).hexdigest()
+
+
+def get_current_user_password_version(user_id):
+    if not user_id:
+        return None
+
+    with get_db_connection() as conn:
+        user = conn.execute(
+            "SELECT password_version FROM users WHERE id = %s",
+            (user_id,)
+        ).fetchone()
+
+    if not user:
+        return None
+
+    return user.get("password_version")
+
+
+def is_logged_in_password_version_current():
+    user_id = session.get("user_id")
+    session_password_version = session.get("password_version")
+
+    if not user_id or not session_password_version:
+        return False
+
+    current_password_version = get_current_user_password_version(user_id)
+
+    if not current_password_version:
+        return False
+
+    return hmac.compare_digest(
+        str(session_password_version),
+        str(current_password_version)
+    )
 
 
 # ============================================================
@@ -653,6 +699,11 @@ def initialize_database():
         """)
 
         conn.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS password_version TEXT;
+        """)
+
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS system_logs (
                 id SERIAL PRIMARY KEY,
                 time VARCHAR(50) NOT NULL,
@@ -721,15 +772,18 @@ def initialize_database():
                 continue
 
             password_hash = generate_password_hash(password)
+            password_version = get_password_version(password)
 
             conn.execute(
                 """
-                INSERT INTO users (username, password_hash)
-                VALUES (%s, %s)
+                INSERT INTO users (username, password_hash, password_version)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (username)
-                DO UPDATE SET password_hash = EXCLUDED.password_hash;
+                DO UPDATE SET
+                    password_hash = EXCLUDED.password_hash,
+                    password_version = EXCLUDED.password_version;
                 """,
-                (username, password_hash)
+                (username, password_hash, password_version)
             )
 
 
@@ -816,6 +870,25 @@ def enforce_session_timeout():
                 "error": "Unauthorized"
             }), 401
 
+        return redirect(url_for("login"))
+
+    if not is_logged_in_password_version_current():
+        username = session.get("username", "UNKNOWN")
+        ip_address = get_client_ip()
+        event = "Forced Logout - Password Changed"
+
+        if not was_recent_log_logged(username, ip_address, event, seconds=30):
+            add_log(event, username)
+
+        session.clear()
+
+        if request.path.startswith("/api/") or request.endpoint == "camera_feed":
+            return jsonify({
+                "authenticated": False,
+                "error": "Password changed. Please log in again."
+            }), 401
+
+        flash("Your account password was changed. Please log in again.")
         return redirect(url_for("login"))
 
     return None
@@ -911,7 +984,7 @@ def login():
 
         with get_db_connection() as conn:
             user = conn.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = %s",
+                "SELECT id, username, password_hash, password_version FROM users WHERE username = %s",
                 (username,)
             ).fetchone()
 
@@ -922,6 +995,7 @@ def login():
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["device_info"] = detected_device_info
+            session["password_version"] = user["password_version"]
 
             session["expires_at"] = (
                 get_utc_now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
