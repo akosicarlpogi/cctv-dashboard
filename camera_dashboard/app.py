@@ -18,6 +18,7 @@ import re
 import os
 import hmac
 import hashlib
+import ipaddress
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 load_dotenv()
@@ -560,6 +561,35 @@ def is_ip_blocked(ip_address):
     return blocked_ip is not None
 
 
+def normalize_ip_address(ip_address):
+    raw_ip = clean_log_value(ip_address, "", 100)
+
+    if not raw_ip:
+        return None
+
+    try:
+        return str(ipaddress.ip_address(raw_ip))
+    except ValueError:
+        return None
+
+
+def is_carlson_admin():
+    return session.get("username") == "carlson"
+
+
+def format_blocked_until(blocked_until):
+    if not blocked_until:
+        return "N/A"
+
+    try:
+        if blocked_until.tzinfo is None:
+            blocked_until = blocked_until.replace(tzinfo=timezone.utc)
+
+        return blocked_until.astimezone(PH_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    except AttributeError:
+        return str(blocked_until)
+
+
 def is_username_locked(username):
     now = get_utc_now()
     safe_username = clean_log_value(username, "UNKNOWN", 50)
@@ -872,6 +902,25 @@ def enforce_session_timeout():
 
         return redirect(url_for("login"))
 
+    if is_ip_blocked(get_client_ip()):
+        username = session.get("username", "UNKNOWN")
+        ip_address = get_client_ip()
+        event = "Forced Logout"
+
+        if not was_recent_log_logged(username, ip_address, event, seconds=30):
+            add_log(event, username)
+
+        session.clear()
+
+        if request.path.startswith("/api/") or request.endpoint == "camera_feed":
+            return jsonify({
+                "authenticated": False,
+                "error": "Your IP address is blocked."
+            }), 401
+
+        flash("Your IP address is blocked. Please contact the administrator.")
+        return redirect(url_for("login"))
+
     if not is_logged_in_password_version_current():
         username = session.get("username", "UNKNOWN")
         ip_address = get_client_ip()
@@ -885,10 +934,10 @@ def enforce_session_timeout():
         if request.path.startswith("/api/") or request.endpoint == "camera_feed":
             return jsonify({
                 "authenticated": False,
-                "error": "Password changed. Please log in again."
+                "error": "Session revoked. Please log in again."
             }), 401
 
-        flash("Your account password was changed. Please log in again.")
+        flash("Your session was revoked. Please log in again.")
         return redirect(url_for("login"))
 
     return None
@@ -1161,6 +1210,156 @@ def api_devices():
     })
 
 
+@app.route("/api/blocked-ips")
+@limiter.exempt
+def api_blocked_ips():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    now = get_utc_now()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_ips WHERE blocked_until <= %s",
+            (now,)
+        )
+
+        blocked_ips = conn.execute(
+            """
+            SELECT ip_address, blocked_until, reason
+            FROM blocked_ips
+            WHERE blocked_until > %s
+            ORDER BY blocked_until DESC
+            LIMIT 25
+            """,
+            (now,)
+        ).fetchall()
+
+    return jsonify({
+        "blocked_ips": [
+            {
+                "ip_address": row["ip_address"],
+                "blocked_until": format_blocked_until(row["blocked_until"]),
+                "reason": row.get("reason") or "Manual block"
+            }
+            for row in blocked_ips
+        ]
+    })
+
+
+@app.route("/api/block-ip", methods=["POST"])
+@limiter.exempt
+def api_block_ip():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    data = request.get_json(silent=True) or {}
+
+    ip_address = normalize_ip_address(data.get("ip_address", ""))
+
+    if not ip_address:
+        return jsonify({
+            "success": False,
+            "error": "Enter a valid IPv4 or IPv6 address."
+        }), 400
+
+    if ip_address == normalize_ip_address(get_client_ip()):
+        return jsonify({
+            "success": False,
+            "error": "You cannot block your own current IP address from this panel."
+        }), 400
+
+    try:
+        duration_minutes = int(data.get("duration_minutes", 60))
+    except (TypeError, ValueError):
+        duration_minutes = 60
+
+    duration_minutes = max(1, min(duration_minutes, 10080))
+    blocked_until = get_utc_now() + timedelta(minutes=duration_minutes)
+    reason = clean_log_value(
+        data.get("reason") or f"Manual block by {session.get('username', 'carlson')}",
+        "Manual block",
+        150
+    )
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO blocked_ips (ip_address, blocked_until, reason)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (ip_address)
+            DO UPDATE SET
+                blocked_until = EXCLUDED.blocked_until,
+                reason = EXCLUDED.reason
+            """,
+            (ip_address, blocked_until, reason)
+        )
+
+    add_log(f"Manual IP Blocked: {ip_address}", session.get("username", "carlson"))
+
+    return jsonify({
+        "success": True,
+        "ip_address": ip_address,
+        "blocked_until": format_blocked_until(blocked_until)
+    })
+
+
+@app.route("/api/unblock-ip", methods=["POST"])
+@limiter.exempt
+def api_unblock_ip():
+    if "user_id" not in session:
+        return jsonify({
+            "authenticated": False,
+            "error": "Unauthorized"
+        }), 401
+
+    if not is_carlson_admin():
+        return jsonify({
+            "authenticated": False,
+            "error": "Forbidden"
+        }), 403
+
+    data = request.get_json(silent=True) or {}
+    ip_address = normalize_ip_address(data.get("ip_address", ""))
+
+    if not ip_address:
+        return jsonify({
+            "success": False,
+            "error": "Enter a valid IPv4 or IPv6 address."
+        }), 400
+
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM blocked_ips WHERE ip_address = %s",
+            (ip_address,)
+        )
+
+    add_log(f"Manual IP Unblocked: {ip_address}", session.get("username", "carlson"))
+
+    return jsonify({
+        "success": True,
+        "ip_address": ip_address
+    })
+
+
 @app.route("/camera-feed")
 @limiter.exempt
 def camera_feed():
@@ -1226,7 +1425,9 @@ def dashboard():
         logs=logs,
         devices=get_initial_device_statuses(),
         camera_stream_url=CAMERA_STREAM_URL,
-        session_seconds_remaining=get_session_seconds_remaining()
+        session_seconds_remaining=get_session_seconds_remaining(),
+        is_carlson_admin=is_carlson_admin(),
+        current_ip=get_client_ip()
     )
 
 

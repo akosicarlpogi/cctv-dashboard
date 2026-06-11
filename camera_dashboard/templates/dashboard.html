@@ -172,6 +172,90 @@
             line-height: 1.25;
         }
 
+        .admin-ip-panel {
+            margin-top: 25px;
+            padding-top: 18px;
+            border-top: 1px solid #ddd;
+        }
+
+        .admin-ip-panel h3 {
+            margin-bottom: 8px;
+        }
+
+        .admin-note,
+        .admin-message {
+            font-size: 0.85em;
+            color: #555;
+            line-height: 1.25;
+        }
+
+        .admin-message {
+            margin-top: 8px;
+            min-height: 18px;
+        }
+
+        .admin-message.success {
+            color: green;
+            font-weight: bold;
+        }
+
+        .admin-message.error {
+            color: red;
+            font-weight: bold;
+        }
+
+        .ip-block-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .ip-block-row input {
+            padding: 9px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .ip-block-row input[type="text"] {
+            flex: 1 1 190px;
+        }
+
+        .ip-block-row input[type="number"] {
+            width: 105px;
+        }
+
+        .blocked-ip-list {
+            margin-top: 10px;
+            font-size: 0.85em;
+            color: #555;
+        }
+
+        .blocked-ip-item {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .small-danger-button {
+            padding: 6px 8px;
+            background-color: #ff4d4d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+
+        .small-danger-button:hover {
+            background-color: #cc0000;
+        }
+
         .log-buttons {
             display: flex;
             gap: 8px;
@@ -341,6 +425,49 @@
                     Stop Webcam
                 </button>
             </div>
+
+            {% if is_carlson_admin %}
+            <div class="admin-ip-panel">
+                <h3>IP Blocking Controls</h3>
+
+                <p class="admin-note">
+                    Admin-only panel. Visible only to carlson. Blocking an IP will prevent that IP from logging in and will force out any active session using that IP on its next request.
+                </p>
+
+                <div class="ip-block-row">
+                    <input
+                        type="text"
+                        id="blockIpInput"
+                        placeholder="Enter IP address from logs"
+                        autocomplete="off"
+                    >
+
+                    <input
+                        type="number"
+                        id="blockMinutesInput"
+                        min="1"
+                        max="10080"
+                        value="60"
+                        title="Block duration in minutes"
+                    >
+
+                    <button type="button" class="camera-button" onclick="blockIpAddress()">
+                        Block IP
+                    </button>
+
+                    <button type="button" class="camera-button stop-button" onclick="unblockIpAddress()">
+                        Unblock IP
+                    </button>
+                </div>
+
+                <div id="ipBlockMessage" class="admin-message"></div>
+
+                <div class="blocked-ip-list">
+                    <strong>Currently blocked IPs</strong>
+                    <div id="blockedIpList">Loading blocked IPs...</div>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <div>
@@ -466,6 +593,7 @@
         const cameraStreamUrl = {{ camera_stream_url|tojson }};
         let cameraKnownOnline = null;
         const csrfToken = {{ csrf_token()|tojson }};
+        const isCarlsonAdmin = {{ is_carlson_admin|tojson }};
 
         let lastActivityHeartbeatAt = 0;
         let activityHeartbeatInProgress = false;
@@ -848,6 +976,174 @@
             }, millisecondsUntilTimeout);
         }
 
+        function setIpBlockMessage(message, type = "") {
+            const messageBox = document.getElementById("ipBlockMessage");
+
+            if (!messageBox) {
+                return;
+            }
+
+            messageBox.textContent = message;
+            messageBox.className = "admin-message" + (type ? " " + type : "");
+        }
+
+        function getIpBlockInputValue() {
+            const ipInput = document.getElementById("blockIpInput");
+            return ipInput ? ipInput.value.trim() : "";
+        }
+
+        async function refreshBlockedIps() {
+            if (!isCarlsonAdmin || alreadyHandlingExpiredSession) {
+                return;
+            }
+
+            const list = document.getElementById("blockedIpList");
+
+            if (!list) {
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/blocked-ips?t=" + Date.now(), {
+                    method: "GET",
+                    cache: "no-store",
+                    credentials: "same-origin"
+                });
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok) {
+                    list.textContent = "Unable to load blocked IPs.";
+                    return;
+                }
+
+                const data = await response.json();
+                const blockedIps = data.blocked_ips || [];
+
+                list.innerHTML = "";
+
+                if (blockedIps.length === 0) {
+                    list.textContent = "No manually blocked IPs.";
+                    return;
+                }
+
+                blockedIps.forEach(function(item) {
+                    const row = document.createElement("div");
+                    row.className = "blocked-ip-item";
+
+                    const text = document.createElement("span");
+                    text.textContent = item.ip_address + " — until " + item.blocked_until;
+
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "small-danger-button";
+                    button.textContent = "Unblock";
+                    button.onclick = function () {
+                        unblockIpAddress(item.ip_address);
+                    };
+
+                    row.appendChild(text);
+                    row.appendChild(button);
+                    list.appendChild(row);
+                });
+
+            } catch (error) {
+                list.textContent = "Unable to load blocked IPs.";
+            }
+        }
+
+        async function blockIpAddress() {
+            const ipAddress = getIpBlockInputValue();
+            const minutesInput = document.getElementById("blockMinutesInput");
+            const durationMinutes = minutesInput ? Number(minutesInput.value || 60) : 60;
+
+            if (!ipAddress) {
+                setIpBlockMessage("Enter an IP address first.", "error");
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/block-ip", {
+                    method: "POST",
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken
+                    },
+                    body: JSON.stringify({
+                        ip_address: ipAddress,
+                        duration_minutes: durationMinutes
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok || !data.success) {
+                    setIpBlockMessage(data.error || "Unable to block IP.", "error");
+                    return;
+                }
+
+                setIpBlockMessage("Blocked " + data.ip_address + " until " + data.blocked_until + ".", "success");
+                refreshBlockedIps();
+                refreshSystemLogs(true, false);
+
+            } catch (error) {
+                setIpBlockMessage("Unable to block IP. Check connection.", "error");
+            }
+        }
+
+        async function unblockIpAddress(ipAddressOverride = null) {
+            const ipAddress = ipAddressOverride || getIpBlockInputValue();
+
+            if (!ipAddress) {
+                setIpBlockMessage("Enter an IP address first.", "error");
+                return;
+            }
+
+            try {
+                const response = await fetch("/api/unblock-ip", {
+                    method: "POST",
+                    cache: "no-store",
+                    credentials: "same-origin",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken
+                    },
+                    body: JSON.stringify({
+                        ip_address: ipAddress
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.status === 401) {
+                    handleSessionExpired();
+                    return;
+                }
+
+                if (!response.ok || !data.success) {
+                    setIpBlockMessage(data.error || "Unable to unblock IP.", "error");
+                    return;
+                }
+
+                setIpBlockMessage("Unblocked " + data.ip_address + ".", "success");
+                refreshBlockedIps();
+                refreshSystemLogs(true, false);
+
+            } catch (error) {
+                setIpBlockMessage("Unable to unblock IP. Check connection.", "error");
+            }
+        }
+
         async function checkSessionStatus() {
             if (alreadyHandlingExpiredSession) {
                 return;
@@ -1149,12 +1445,14 @@
             startDevicePolling();
             startLogPolling();
             startSessionChecking();
+            refreshBlockedIps();
         });
 
         window.addEventListener("focus", function () {
             checkSessionStatus();
             refreshDeviceStatuses();
             refreshSystemLogs(false, false);
+            refreshBlockedIps();
         });
 
         document.addEventListener("visibilitychange", function () {
