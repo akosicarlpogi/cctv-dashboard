@@ -969,8 +969,8 @@ def login():
 
         if is_ip_blocked(ip_address):
             add_log("Blocked Login Attempt", username or "UNKNOWN")
-            flash(f"Too many failed login attempts. Try again after {IP_BLOCK_MINUTES} minutes.")
-            return render_login_page(429)
+            flash("Invalid credentials. Please try again.")
+            return render_login_page()
 
         if not verify_login_captcha(submitted_captcha, captcha_token):
             add_log("Failed CAPTCHA Attempt", username or "UNKNOWN")
