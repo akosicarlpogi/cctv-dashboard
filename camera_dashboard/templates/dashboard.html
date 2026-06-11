@@ -164,6 +164,14 @@
             margin-bottom: 8px;
         }
 
+        .device-privacy-note {
+            font-size: 0.85em;
+            color: #555;
+            margin-top: 8px;
+            margin-bottom: 0;
+            line-height: 1.25;
+        }
+
         .log-buttons {
             display: flex;
             gap: 8px;
@@ -317,7 +325,7 @@
             </button>
 
             <div class="local-webcam-section">
-                <h3>Current Logged-in Device Camera</h3>
+                <h3>Logged-in Device (Only You)</h3>
 
                 <video id="userCamera" autoplay playsinline muted></video>
 
@@ -360,7 +368,7 @@
 
                     <tbody>
                         <tr>
-                            <td>Current Logged-in Device (Only You)</td>
+                            <td>Logged-in Device (Only You)</td>
                             <td class="ip-cell">This browser only</td>
                             <td id="browserCameraDeviceStatus" class="status-down">
                                 Offline / Permission Required
@@ -370,8 +378,7 @@
                 </table>
 
                 <p class="device-privacy-note">
-                    Note: the current logged-in device is detected only from your own browser.
-                    Other users see their own current browser device, not yours.
+                    Note: this logged-in device is visible only to your own browser. Other users see their own device.
                 </p>
             </div>
 

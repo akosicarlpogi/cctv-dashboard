@@ -96,7 +96,7 @@ DEVICES = [
         "name": "CCTV Camera",
         "device_type": "cctv_camera",
         "address": CAMERA_STREAM_URL,
-        "display_address": "Hidden for security",
+        "display_address": "Hidden",
         "status_url": CAMERA_STATUS_URL,
     },
 ]
@@ -457,7 +457,7 @@ def get_device_statuses():
         device_statuses.append({
             "name": device["name"],
             "device_type": device.get("device_type", "device"),
-            "ip": device.get("display_address", "Hidden for security"),
+            "ip": device.get("display_address", "Hidden"),
             "status": "Online" if online else "Offline / Not Detected",
             "online": online
         })
@@ -472,7 +472,7 @@ def get_initial_device_statuses():
         initial_devices.append({
             "name": device["name"],
             "device_type": device.get("device_type", "device"),
-            "ip": device.get("display_address", "Hidden for security"),
+            "ip": device.get("display_address", "Hidden"),
             "status": "Checking...",
             "online": False
         })
